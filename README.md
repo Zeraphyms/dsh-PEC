@@ -29,7 +29,7 @@
 | 文件 | 按会话工作目录浏览，点文件看文本（>2 MB 或二进制拒绝） |
 | 终端 | 真 PTY + xterm.js 渲染：彩色、光标、行编辑、Ctrl-C / Tab / 方向键，支持全屏 TUI；无 PTY 时自动降级为持久 shell |
 | 设置 | 读取并可改 DSH 各设置组里的 volatile 字段；**模型供应商**可在手机上加/删（等同桌面「设置 → 模型 → 添加供应商」） |
-| 供应商 | 写 `llm-pi-ai` 的 `providers.<route>`：路由名、baseURL、协议（openai-completions / openai-responses / anthropic-messages）、模型列表、API Key（存进凭据服务） |
+| 供应商 | 写 `llm-pi-ai` 的 `providers.<route>`：路由名、baseURL、协议（openai-completions / openai-responses / anthropic-messages）、模型列表、API Key（存进凭据服务）。点任意供应商可查看配置、更换密钥、删除 |
 | 目标 | 看目标、阶段、轮次，暂停 / 继续 / 完成 / 清除 |
 | 计划任务 | 列出提醒、新建、删除 |
 | 审批 | 两档接管：安全模式（电脑端在线时交给电脑，不留残窗）与强制模式（人在外面时用） |

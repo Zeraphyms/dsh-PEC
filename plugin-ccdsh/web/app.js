@@ -1409,14 +1409,15 @@ function panelShell({ title, subtitle, right = [] }) {
  * whether to quit.
  */
 window.__ccdshBack = () => {
-  const top = panelStack[panelStack.length - 1]
-  if (top) {
-    top.close()
-    return true
-  }
+  // A sheet is painted above the panel that opened it, so it is consumed first.
   if (activeSheet) {
     activeSheet.remove()
     activeSheet = null
+    return true
+  }
+  const top = panelStack[panelStack.length - 1]
+  if (top) {
+    top.close()
     return true
   }
   if (state.view === 'chat') {
@@ -1953,6 +1954,60 @@ function openScheduleForm(reload) {
 
 /* ------------------------------------------------------------------ settings */
 
+/** One provider: read-only profile, editable key, and delete. */
+function openProviderDetail(provider, reload) {
+  const key = el('input', { placeholder: '输入新的 API Key', type: 'password' })
+  const error = el('div', { class: 'err' })
+  openSheet((close) => [
+    el('h2', { text: provider.displayName || provider.route }),
+    el('div', { class: 'kv' }, [el('span', { text: '路由名' }), el('span', { text: provider.route })]),
+    el('div', { class: 'kv' }, [el('span', { text: '接口地址' }), el('span', { text: provider.baseURL || '—' })]),
+    el('div', { class: 'kv' }, [el('span', { text: '协议' }), el('span', { text: provider.api || '—' })]),
+    el('div', { class: 'kv' }, [
+      el('span', { text: 'API Key' }),
+      el('span', { text: provider.keyConfigured ? `已配置（${provider.keyRef}）` : `未配置（${provider.keyRef}）` }),
+    ]),
+    el('div', { class: 'kv' }, [
+      el('span', { text: '模型' }),
+      el('span', { text: provider.models.map((model) => model.name || model.id).join('、') || '—' }),
+    ]),
+    el('div', { class: 'small', text: '路由名、地址、协议和模型列表与电脑端一致，已创建的供应商只在这里更换密钥。' }),
+    el('div', { class: 'field' }, [el('label', { text: '更换 API Key' }), key]),
+    error,
+    el('button', {
+      class: 'btn',
+      onclick: async () => {
+        error.textContent = ''
+        try {
+          await api('/api/providers/key', {
+            method: 'POST',
+            body: { route: provider.route, apiKey: key.value },
+          })
+          close()
+          toast(key.value.trim() ? '密钥已更新' : '密钥已清除')
+          reload()
+        } catch (cause) {
+          error.textContent = '保存失败：' + cause.message
+        }
+      },
+    }, '保存密钥'),
+    el('button', {
+      class: 'btn',
+      style: 'background:#3a1418;color:#ffb4b4',
+      onclick: async () => {
+        try {
+          await api('/api/providers/delete', { method: 'POST', body: { route: provider.route } })
+          close()
+          toast('已删除 ' + provider.route)
+          reload()
+        } catch (cause) {
+          error.textContent = '删除失败：' + cause.message
+        }
+      },
+    }, '删除供应商'),
+  ])
+}
+
 /** Create one llm-pi-ai route: the same write the desktop settings card performs. */
 function openProviderForm(meta, reload) {
   const route = el('input', { placeholder: 'my-provider', autocapitalize: 'off', autocorrect: 'off' })
@@ -2044,7 +2099,10 @@ function openSettingsPanel() {
     ]
     for (const provider of providers.providers) {
       rows.push(
-        el('div', { class: 'file-row' }, [
+        el('button', {
+          class: 'file-row',
+          onclick: () => openProviderDetail(provider, load),
+        }, [
           el('div', { class: 'ftype' }, [svg(ICON.spark, 15)]),
           el('div', { class: 'fname' }, [
             el('div', { text: provider.displayName || provider.route }),
@@ -2054,19 +2112,7 @@ function openSettingsPanel() {
               text: `${provider.models.length} 个模型 · 密钥${provider.keyConfigured ? '已配置' : '未配置'}`,
             }),
           ]),
-          el('button', {
-            class: 'chip',
-            style: 'border-color:#5b1b22;color:#ffb4b4',
-            onclick: async () => {
-              try {
-                await api('/api/providers/delete', { method: 'POST', body: { route: provider.route } })
-                toast('已删除 ' + provider.route)
-                load()
-              } catch (error) {
-                toast('删除失败：' + error.message)
-              }
-            },
-          }, ['删除']),
+          el('div', { class: 'fmeta', text: '›' }),
         ]),
       )
     }

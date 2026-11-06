@@ -373,6 +373,19 @@ export class Dsh {
     return { route, keyRef, keyStored: Boolean(key), models: models.length }
   }
 
+  /** Replace the stored key for one provider route (empty clears it). */
+  async setProviderKey(route, apiKey) {
+    const credentials = this.#svc('credentials')
+    if (!credentials) throw new Error('凭据服务不可用')
+    const name = String(route || '').trim()
+    if (!name) throw new Error('缺少路由名')
+    const keyRef = name.toUpperCase().replace(/[^A-Z0-9]+/g, '_')
+    const value = String(apiKey || '').trim()
+    if (value) await credentials.set(keyRef, value)
+    else if (typeof credentials.unset === 'function') await credentials.unset(keyRef)
+    return { route: name, keyRef, keyConfigured: Boolean(value) }
+  }
+
   async removeProvider(route) {
     const settings = this.#svc('settings')
     const credentials = this.#svc('credentials')

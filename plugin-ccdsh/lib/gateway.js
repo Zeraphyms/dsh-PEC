@@ -523,6 +523,10 @@ export class Gateway {
       const body = await readJson(req)
       return sendJson(res, 200, await this.dsh.removeProvider(body.route))
     }
+    if (pathname === '/api/providers/key' && req.method === 'POST') {
+      const body = await readJson(req)
+      return sendJson(res, 200, await this.dsh.setProviderKey(body.route, body.apiKey))
+    }
 
     // ---- settings -------------------------------------------------------
     if (pathname === '/api/settings' && req.method === 'GET') {
