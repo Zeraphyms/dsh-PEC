@@ -1954,28 +1954,57 @@ function openScheduleForm(reload) {
 
 /* ------------------------------------------------------------------ settings */
 
-/** One provider: read-only profile, editable key, and delete. */
+/** One provider: editable profile (name / URL / protocol / models), key, delete. */
 function openProviderDetail(provider, reload) {
-  const key = el('input', { placeholder: '输入新的 API Key', type: 'password' })
+  const key = el('input', { placeholder: '输入新的 API Key（留空则不动）', type: 'password' })
+  const display = el('input', { value: provider.displayName || '' })
+  const baseURL = el('input', { value: provider.baseURL || '' })
+  const models = el('textarea', { rows: '4' })
+  models.value = provider.models.map((model) => (model.name && model.name !== model.id ? `${model.id} ${model.name}` : model.id)).join('\n')
+  models.style.cssText = 'width:100%;background:var(--bg-soft);border:1px solid var(--line);border-radius:10px;padding:10px;color:inherit;font-size:12.5px;font-family:ui-monospace,Consolas,monospace'
+  const protocols = ['openai-completions', 'openai-responses', 'anthropic-messages']
+  const protocol = el('select', {}, protocols.map((value) =>
+    el('option', { value, selected: value === (provider.api || protocols[0]) ? 'selected' : null }, [value]),
+  ))
   const error = el('div', { class: 'err' })
+
   openSheet((close) => [
-    el('h2', { text: provider.displayName || provider.route }),
-    el('div', { class: 'kv' }, [el('span', { text: '路由名' }), el('span', { text: provider.route })]),
-    el('div', { class: 'kv' }, [el('span', { text: '接口地址' }), el('span', { text: provider.baseURL || '—' })]),
-    el('div', { class: 'kv' }, [el('span', { text: '协议' }), el('span', { text: provider.api || '—' })]),
+    el('h2', { text: provider.route }),
     el('div', { class: 'kv' }, [
       el('span', { text: 'API Key' }),
-      el('span', { text: provider.keyConfigured ? `已配置（${provider.keyRef}）` : `未配置（${provider.keyRef}）` }),
+      el('span', { text: provider.keyConfigured ? `已配置（${provider.keyRef}）` : '未配置' }),
     ]),
-    el('div', { class: 'kv' }, [
-      el('span', { text: '模型' }),
-      el('span', { text: provider.models.map((model) => model.name || model.id).join('、') || '—' }),
-    ]),
-    el('div', { class: 'small', text: '路由名、地址、协议和模型列表与电脑端一致，已创建的供应商只在这里更换密钥。' }),
-    el('div', { class: 'field' }, [el('label', { text: '更换 API Key' }), key]),
+    el('div', { class: 'field' }, [el('label', { text: '显示名称' }), display]),
+    el('div', { class: 'field' }, [el('label', { text: '接口地址 baseURL' }), baseURL]),
+    el('div', { class: 'field' }, [el('label', { text: '协议' }), protocol]),
+    el('div', { class: 'field' }, [el('label', { text: '模型（每行一个：id 或 id 显示名）' }), models]),
     error,
     el('button', {
       class: 'btn',
+      onclick: async () => {
+        error.textContent = ''
+        try {
+          await api('/api/providers/update', {
+            method: 'POST',
+            body: {
+              route: provider.route,
+              displayName: display.value,
+              baseURL: baseURL.value,
+              api: protocol.value,
+              models: models.value,
+            },
+          })
+          close()
+          toast('已保存 ' + provider.route)
+          reload()
+        } catch (cause) {
+          error.textContent = '保存失败：' + cause.message
+        }
+      },
+    }, '保存配置'),
+    el('button', {
+      class: 'btn',
+      style: 'background:#1c2331;color:#cdd8f2',
       onclick: async () => {
         error.textContent = ''
         try {

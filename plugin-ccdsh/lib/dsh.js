@@ -373,6 +373,47 @@ export class Dsh {
     return { route, keyRef, keyStored: Boolean(key), models: models.length }
   }
 
+  /**
+   * Edit one existing route: display name, base URL, protocol, or the model
+   * list. Only supplied fields change; everything else is preserved, so the
+   * desktop and the phone stay two views of the same profile.
+   */
+  async updateProvider(body = {}) {
+    const settings = this.#svc('settings')
+    if (!settings) throw new Error('设置服务不可用')
+    const name = String(body.route || '').trim()
+    if (!name) throw new Error('缺少路由名')
+
+    const row = settings.describe?.({ redactSecrets: true }) || []
+    const current = row.find((entry) => entry.ns === 'llm-pi-ai')?.value?.providers?.[name]
+    if (!current) throw new Error(`供应商 ${name} 不存在`)
+
+    const profile = { ...current }
+    if (body.displayName !== undefined) profile.displayName = String(body.displayName).trim().slice(0, 60) || name
+    if (body.baseURL !== undefined) {
+      const baseURL = String(body.baseURL).trim()
+      if (!/^https?:\/\//i.test(baseURL)) throw new Error('接口地址必须是 http(s):// 开头')
+      profile.baseURL = baseURL
+    }
+    if (body.api !== undefined) {
+      if (!['openai-completions', 'openai-responses', 'anthropic-messages'].includes(body.api)) {
+        throw new Error('不支持的协议')
+      }
+      profile.api = body.api
+    }
+    if (body.models !== undefined) {
+      const models = parseModelLines(body.models)
+      if (!models.length) throw new Error('至少要保留一个模型 id')
+      profile.models = models
+    }
+
+    await this.#outsideHmr(() =>
+      settings.mutate('llm-pi-ai', [{ op: 'set', path: ['providers', name], value: profile }], body.revision),
+    )
+    this.log.info(`provider updated: ${name} (${profile.models.length} models)`)
+    return { route: name, models: profile.models.length, baseURL: profile.baseURL, api: profile.api }
+  }
+
   /** Replace the stored key for one provider route (empty clears it). */
   async setProviderKey(route, apiKey) {
     const credentials = this.#svc('credentials')

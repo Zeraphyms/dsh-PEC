@@ -1,6 +1,6 @@
 {
   "name": "cc-dsh",
-  "version": "1.6.2",
+  "version": "1.7.0",
   "private": true,
   "description": "Phone gateway for DeepSeek Harness: pair a phone, control sessions, models, presets, approvals, workspace files, a command terminal and DSH settings remotely.",
   "type": "module",
