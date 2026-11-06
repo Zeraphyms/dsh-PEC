@@ -53,6 +53,7 @@ const el = (tag, props = {}, children = []) => {
     if (key === 'class') node.className = value
     else if (key === 'text') node.textContent = value
     else if (key === 'html') node.innerHTML = value
+    else if (key === 'onmount') queueMicrotask(() => { try { value(node) } catch { /* ignore */ } })
     else if (key.startsWith('on')) node.addEventListener(key.slice(2).toLowerCase(), value)
     else if (key === 'dataset') Object.assign(node.dataset, value)
     else node.setAttribute(key, value)
@@ -2037,42 +2038,96 @@ function openProviderDetail(provider, reload) {
   ])
 }
 
-/** Create one llm-pi-ai route: the same write the desktop settings card performs. */
+/** Create one llm-pi-ai route: fetch the endpoint's models, pick, then save. */
 function openProviderForm(meta, reload) {
   const route = el('input', { placeholder: 'my-provider', autocapitalize: 'off', autocorrect: 'off' })
   const display = el('input', { placeholder: '显示名称（可留空）' })
   const baseURL = el('input', { placeholder: 'https://api.example.com/v1' })
   const key = el('input', { placeholder: 'sk-...', type: 'password' })
-  const models = el('textarea', {
-    rows: '4',
-    placeholder: 'gpt-4o-mini\nclaude-sonnet-4 gpt-5',
-  })
   const protocols = meta.protocols?.length ? meta.protocols : ['openai-completions']
   const protocol = el('select', {}, protocols.map((value) =>
     el('option', { value, selected: value === protocols[0] ? 'selected' : null }, [value]),
   ))
   const error = el('div', { class: 'err' })
+  const picked = new Set()
+  const sheetBody = { save: null }
 
-  models.style.width = '100%'
-  models.style.background = 'var(--bg-soft)'
-  models.style.border = '1px solid var(--line)'
-  models.style.borderRadius = '10px'
-  models.style.padding = '10px'
-  models.style.color = 'inherit'
-  models.style.fontFamily = 'ui-monospace, Consolas, monospace'
+  const fetchButton = el('button', {
+    class: 'btn',
+    style: 'background:#1c2331;color:#cdd8f2',
+    onclick: () => fetchModels(),
+  }, '获取模型')
+
+  async function fetchModels() {
+    error.textContent = ''
+    const base = baseURL.value.trim()
+    if (!/^https?:\/\//i.test(base)) {
+      error.textContent = '请先填接口地址（http(s):// 开头）'
+      return
+    }
+    fetchButton.disabled = true
+    fetchButton.textContent = '获取中…'
+    try {
+      const answer = await api('/api/providers/discover', {
+        method: 'POST',
+        body: { baseURL: base, api: protocol.value, apiKey: key.value },
+      })
+      const found = answer.models || []
+      if (!found.length) {
+        error.textContent = '该端点没有返回任何模型'
+        return
+      }
+      renderPickList(found)
+    } catch (cause) {
+      error.textContent = '获取失败：' + cause.message
+    } finally {
+      fetchButton.disabled = false
+      fetchButton.textContent = '获取模型'
+    }
+  }
+
+  /** Checkbox list of advertised models; picked ids feed the create call. */
+  function renderPickList(found) {
+    document.getElementById('provider-pick')?.remove()
+    picked.clear()
+    const rows = found.map((model) => {
+      picked.add(model.id)
+      return el('button', {
+        class: 'option sel',
+        onclick: (event) => {
+          const on = picked.has(model.id)
+          if (on) picked.delete(model.id)
+          else picked.add(model.id)
+          event.currentTarget.classList.toggle('sel', !on)
+        },
+      }, [
+        el('div', { class: 'name' }, [
+          el('div', { text: model.id }),
+          model.name && model.name !== model.id ? el('div', { class: 'desc', text: model.name }) : null,
+        ]),
+        el('div', { class: 'check', text: '✓' }),
+      ])
+    })
+    const block = el('div', { id: 'provider-pick' }, [
+      el('div', { class: 'small', style: 'margin:10px 6px 2px', text: `获取到 ${found.length} 个模型，点一下取消不要的：` }),
+      ...rows,
+    ])
+    if (sheetBody.save) sheetBody.save.parentNode.insertBefore(block, sheetBody.save)
+  }
 
   openSheet((close) => [
     el('h2', { text: '添加供应商' }),
-    el('div', { class: 'small', text: '写进电脑端的 llm-pi-ai 配置，与桌面设置里的「添加供应商」等价。' }),
+    el('div', { class: 'small', text: '填好地址和密钥后点「获取模型」，勾选要用的模型再创建；不用发现也可以手动输模型（每行一个 id）。' }),
     el('div', { class: 'field' }, [el('label', { text: '路由名（小写，仅字母数字与连字符）' }), route]),
     el('div', { class: 'field' }, [el('label', { text: '显示名称' }), display]),
     el('div', { class: 'field' }, [el('label', { text: '接口地址 baseURL' }), baseURL]),
     el('div', { class: 'field' }, [el('label', { text: '协议' }), protocol]),
-    el('div', { class: 'field' }, [el('label', { text: 'API Key（可留空，用环境变量）' }), key]),
-    el('div', { class: 'field' }, [el('label', { text: '模型（每行一个：id 或 id 显示名）' }), models]),
+    el('div', { class: 'field' }, [el('label', { text: 'API Key（获取模型和创建时都用它）' }), key]),
     error,
+    fetchButton,
     el('button', {
       class: 'btn',
+      onmount: (node) => { sheetBody.save = node },
       onclick: async () => {
         error.textContent = ''
         try {
@@ -2084,18 +2139,18 @@ function openProviderForm(meta, reload) {
               baseURL: baseURL.value.trim(),
               api: protocol.value,
               apiKey: key.value,
-              models: models.value,
-              revision: meta.revision,
+              // Picked models win; the create endpoint rejects an empty list.
+              models: picked.size ? [...picked] : '',
             },
           })
           close()
           toast(`已添加 ${result.route}（${result.models} 个模型）`)
           reload()
         } catch (cause) {
-          error.textContent = '添加失败：' + cause.message
+          error.textContent = '创建失败：' + cause.message
         }
       },
-    }, '保存'),
+    }, '创建'),
   ])
 }
 

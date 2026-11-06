@@ -406,7 +406,7 @@ export class Gateway {
 
     if (pathname === '/api/debug/services') {
       if (!owner) return sendJson(res, 403, { error: 'owner-only' })
-      const names = ['terminals', 'terminalController', 'settings', 'settingsController', 'configEditor', 'fs', 'workingDirectory', 'agents', 'sessions', 'shell', 'subprocess', 'jobs', 'tools', 'commands', 'ptcRuntime', 'sandbox', 'bash', 'pwsh']
+      const names = ['llm', 'terminals', 'terminalController', 'settings', 'settingsController', 'configEditor', 'fs', 'workingDirectory', 'agents', 'sessions', 'shell', 'subprocess', 'jobs', 'tools', 'commands', 'ptcRuntime', 'sandbox', 'bash', 'pwsh']
       const present = names.filter((name) => Boolean(this.ctx.get(name)))
       let settingsSample = null
       try {
@@ -530,6 +530,10 @@ export class Gateway {
     if (pathname === '/api/providers/update' && req.method === 'POST') {
       const body = await readJson(req)
       return sendJson(res, 200, await this.dsh.updateProvider(body))
+    }
+    if (pathname === '/api/providers/discover' && req.method === 'POST') {
+      const body = await readJson(req)
+      return sendJson(res, 200, await this.dsh.discoverModels(body))
     }
 
     // ---- settings -------------------------------------------------------

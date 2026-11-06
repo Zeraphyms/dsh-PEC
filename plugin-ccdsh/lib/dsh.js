@@ -374,6 +374,33 @@ export class Dsh {
   }
 
   /**
+   * Ask one endpoint which models it advertises — the same Host discovery the
+   * desktop's "fetch models" button uses. Nothing is read or written: the draft
+   * (baseURL / api / one-shot key) comes entirely from the request.
+   */
+  async discoverModels(body = {}) {
+    const llm = this.#svc('llm')
+    if (!llm || typeof llm.discoverModels !== 'function') throw new Error('模型发现服务不可用（llm.discoverModels）')
+    const request = {}
+    // The stored route's key: pass `provider` so pi-ai resolves headers and the
+    // credential itself (my own credentials.resolve sees only the raw value).
+    if (body.provider) request.provider = String(body.provider).trim()
+    if (body.baseURL) request.baseURL = String(body.baseURL).trim()
+    if (body.api) request.api = String(body.api)
+    // One-shot key typed on the phone wins; otherwise let the stored route resolve.
+    if (body.apiKey && String(body.apiKey).trim()) request.apiKey = String(body.apiKey).trim()
+    const models = await llm.discoverModels('llm-pi-ai', request, this.#signal(30_000))
+    return {
+      models: (models || []).map((model) => ({
+        id: model.id,
+        name: model.name || '',
+        contextWindow: model.contextWindow ?? null,
+        inputModalities: model.inputModalities || [],
+      })),
+    }
+  }
+
+  /**
    * Edit one existing route: display name, base URL, protocol, or the model
    * list. Only supplied fields change; everything else is preserved, so the
    * desktop and the phone stay two views of the same profile.
