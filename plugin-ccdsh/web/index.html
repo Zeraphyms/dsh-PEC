@@ -3,13 +3,29 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
-  <meta name="theme-color" content="#0b1020" />
-  <meta name="color-scheme" content="dark" />
+  <meta name="theme-color" content="#ffffff" />
+  <meta name="color-scheme" content="light dark" />
   <title>cc-dsh</title>
   <link rel="manifest" href="/manifest.webmanifest" />
   <link rel="icon" href="/icon.svg" />
   <link rel="stylesheet" href="/style.css" />
   <link rel="stylesheet" href="/vendor/xterm.css" />
+  <script>
+    // Paint with the DSH theme before the first frame: the desktop choice is
+    // cached by the app, `system` follows the phone's own preference.
+    (function () {
+      try {
+        var pref = localStorage.getItem('ccdsh_theme') || 'system';
+        var size = Number(localStorage.getItem('ccdsh_font_size') || 14);
+        var dark = pref === 'dark' ||
+          (pref === 'system' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        if (dark) document.body.setAttribute('data-ds-dark-theme', '');
+        document.documentElement.style.setProperty('--dsh-content-font-size', (size || 14) + 'px');
+        var meta = document.querySelector('meta[name="theme-color"]');
+        if (meta) meta.setAttribute('content', dark ? '#151517' : '#ffffff');
+      } catch (error) { /* first paint without a cache is fine */ }
+    })();
+  </script>
   <script src="/vendor/xterm.js"></script>
   <script src="/vendor/addon-fit.js"></script>
 </head>

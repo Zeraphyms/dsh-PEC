@@ -3,6 +3,50 @@
 const app = document.getElementById('app')
 const toastEl = document.getElementById('toast')
 
+/* ------------------------------------------------------------------ theme */
+
+/**
+ * Mirror the desktop's appearance: the phone reads DSH's own `ui-theme`
+ * settings (light / dark / system plus the text font size), so both screens
+ * agree. `system` falls back to the phone's prefers-color-scheme.
+ */
+function applyTheme(preference, fontSize) {
+  const pref = ['light', 'dark', 'system'].includes(preference) ? preference : 'system'
+  const dark =
+    pref === 'dark' ||
+    (pref === 'system' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches)
+  document.body.toggleAttribute('data-ds-dark-theme', dark)
+  if (fontSize) document.documentElement.style.setProperty('--dsh-content-font-size', `${fontSize}px`)
+  const meta = document.querySelector('meta[name="theme-color"]')
+  if (meta) meta.setAttribute('content', dark ? '#151517' : '#ffffff')
+  try {
+    localStorage.setItem('ccdsh_theme', pref)
+    if (fontSize) localStorage.setItem('ccdsh_font_size', String(fontSize))
+  } catch {
+    /* private mode */
+  }
+}
+
+async function syncDesktopTheme() {
+  try {
+    const settings = await api('/api/settings')
+    const namespace = (settings?.namespaces || []).find((row) => row.ns === 'ui-theme')
+    if (!namespace) return
+    const field = (key) => (namespace.fields || []).find((row) => row.key === key)?.value
+    state.theme = field('preference') || 'system'
+    state.fontSize = Number(field('fontSize')) || 14
+    applyTheme(state.theme, state.fontSize)
+  } catch {
+    /* cosmetic: never block boot */
+  }
+}
+
+if (window.matchMedia) {
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => {
+    if ((state.theme || 'system') === 'system') applyTheme('system', state.fontSize || 14)
+  })
+}
+
 const state = {
   token: '',
   server: null,
@@ -73,7 +117,7 @@ const svg = (path, size = 20) => {
   node.setAttribute('height', size)
   node.setAttribute('fill', 'none')
   node.setAttribute('stroke', 'currentColor')
-  node.setAttribute('stroke-width', '1.9')
+  node.setAttribute('stroke-width', '1.7')
   node.setAttribute('stroke-linecap', 'round')
   node.setAttribute('stroke-linejoin', 'round')
   node.innerHTML = path
@@ -176,6 +220,8 @@ async function api(path, options = {}) {
 async function boot() {
   state.token = readToken()
   if (!state.token) return renderPairing()
+
+  await syncDesktopTheme()
 
   try {
     const bootstrap = await api('/api/bootstrap')

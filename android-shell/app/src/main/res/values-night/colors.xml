@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- DSH dark palette: the same alias tokens the desktop uses at night. -->
+<resources>
+    <color name="dsh_bg">#FF151517</color>
+    <color name="dsh_text">#FFF9FAFB</color>
+    <color name="dsh_text_secondary">#FFCFD3D6</color>
+    <color name="dsh_text_tertiary">#FFADB2B8</color>
+    <color name="dsh_field_bg">#FF232324</color>
+    <color name="dsh_field_border">#1FFFFFFF</color>
+    <color name="dsh_accent">#FF5686FE</color>
+    <color name="dsh_accent_text">#FFFFFFFF</color>
+    <color name="dsh_ghost_bg">#FF232324</color>
+    <color name="dsh_ghost_border">#1FFFFFFF</color>
+    <color name="dsh_ghost_text">#FFF9FAFB</color>
+    <color name="dsh_danger">#FFF25A5A</color>
+    <color name="dsh_warn">#FFDD8629</color>
+    <color name="dsh_mask">#80000000</color>
+</resources>

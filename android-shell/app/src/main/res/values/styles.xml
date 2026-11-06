@@ -1,10 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="AppTheme" parent="android:Theme.Material.NoActionBar">
-        <item name="android:windowBackground">#0b1020</item>
-        <item name="android:colorAccent">#3b82f6</item>
-        <item name="android:statusBarColor">#0b1020</item>
-        <item name="android:navigationBarColor">#0b1020</item>
-        <item name="android:windowLightStatusBar">false</item>
+    <!-- Matches the Harness web client: SystemBars follow the page, dialogs are
+         light in day mode and dark at night (values-night). -->
+    <style name="AppTheme" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/dsh_bg</item>
+        <item name="android:colorAccent">@color/dsh_accent</item>
+        <item name="android:statusBarColor">@color/dsh_bg</item>
+        <item name="android:navigationBarColor">@color/dsh_bg</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
     </style>
 </resources>

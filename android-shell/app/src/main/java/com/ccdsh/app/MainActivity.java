@@ -95,7 +95,7 @@ public class MainActivity extends Activity {
         serverName = prefs.getString(KEY_NAME, "cc-dsh");
 
         root = new FrameLayout(this);
-        root.setBackgroundColor(Color.parseColor("#0b1020"));
+        root.setBackgroundColor(getColor(R.color.dsh_bg));
         setContentView(root);
 
         if (baseUrl.isEmpty() || token.isEmpty()) showSetup();
@@ -147,14 +147,14 @@ public class MainActivity extends Activity {
         scroll.addView(column, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        TextView title = text("cc-dsh", 30, "#e8f0ff", true);
+        TextView title = text("cc-dsh", 30, R.color.dsh_text, true);
         column.addView(title);
 
-        TextView subtitle = text("把手机接到电脑上的 DeepSeek Harness。\n在电脑 DSH 里启用 cc-dsh 插件后，输入它显示的 6 位配对码即可。", 14, "#8fa3c8", false);
+        TextView subtitle = text("把手机接到电脑上的 DeepSeek Harness。\n在电脑 DSH 里启用 cc-dsh 插件后，输入它显示的 6 位配对码即可。", 14, R.color.dsh_text_secondary, false);
         subtitle.setPadding(0, dp(8), 0, dp(20));
         column.addView(subtitle);
 
-        TextView discoverLabel = text("① 找到这台电脑", 13, "#5f7396", true);
+        TextView discoverLabel = text("① 找到这台电脑", 13, R.color.dsh_text_tertiary, true);
         column.addView(discoverLabel);
 
         LinearLayout found = new LinearLayout(this);
@@ -167,7 +167,7 @@ public class MainActivity extends Activity {
         scan.setOnClickListener(v -> startDiscovery(found, scan));
         column.addView(scan, lp(pad, 10));
 
-        TextView manualLabel = text("② 或者直接填写地址（异地用 Tailscale IP）", 13, "#5f7396", true);
+        TextView manualLabel = text("② 或者直接填写地址（异地用 Tailscale IP）", 13, R.color.dsh_text_tertiary, true);
         manualLabel.setPadding(0, dp(18), 0, dp(4));
         column.addView(manualLabel);
 
@@ -175,7 +175,7 @@ public class MainActivity extends Activity {
         urlInput.setTag("url");
         column.addView(urlInput, lp(0, 6));
 
-        TextView codeLabel = text("③ 配对码（第一次配对可留空）", 13, "#5f7396", true);
+        TextView codeLabel = text("③ 配对码（第一次配对可留空）", 13, R.color.dsh_text_tertiary, true);
         codeLabel.setPadding(0, dp(16), 0, dp(4));
         column.addView(codeLabel);
 
@@ -184,7 +184,7 @@ public class MainActivity extends Activity {
         codeInput.setTextSize(TypedValue.COMPLEX_UNIT_SP, 22);
         column.addView(codeInput, lp(0, 6));
 
-        TextView message = text("", 13, "#f87171", false);
+        TextView message = text("", 13, R.color.dsh_danger, false);
         message.setTag("message");
         message.setPadding(0, dp(12), 0, 0);
         column.addView(message);
@@ -208,7 +208,7 @@ public class MainActivity extends Activity {
         });
         column.addView(connect, lp(0, 18));
 
-        TextView hint = text("第一次配对不用输码：只要手机和电脑在同一 Wi-Fi（或都连了 Tailscale），点“连接”就能进。以后再加手机才需要电脑上显示的 6 位码。", 12, "#5f7396", false);
+        TextView hint = text("第一次配对不用输码：只要手机和电脑在同一 Wi-Fi（或都连了 Tailscale），点“连接”就能进。以后再加手机才需要电脑上显示的 6 位码。", 12, R.color.dsh_text_tertiary, false);
         hint.setPadding(0, dp(14), 0, 0);
         column.addView(hint);
 
@@ -226,7 +226,7 @@ public class MainActivity extends Activity {
                 trigger.setEnabled(true);
                 trigger.setText("重新查找");
                 if (servers.isEmpty()) {
-                    TextView none = text("没找到。确认手机和电脑在同一 Wi-Fi，或直接填写地址。", 13, "#f59e0b", false);
+                    TextView none = text("没找到。确认手机和电脑在同一 Wi-Fi，或直接填写地址。", 13, R.color.dsh_warn, false);
                     none.setPadding(0, dp(8), 0, dp(8));
                     container.addView(none);
                     return;
@@ -304,7 +304,7 @@ public class MainActivity extends Activity {
 
         LinearLayout column = new LinearLayout(this);
         column.setOrientation(LinearLayout.VERTICAL);
-        column.setBackgroundColor(Color.parseColor("#0b1020"));
+        column.setBackgroundColor(getColor(R.color.dsh_bg));
         root.addView(column);
 
         // The page owns the whole surface (header, sessions, composer); the
@@ -318,7 +318,7 @@ public class MainActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(2)));
 
         web = new WebView(this);
-        web.setBackgroundColor(Color.parseColor("#0b1020"));
+        web.setBackgroundColor(getColor(R.color.dsh_bg));
         column.addView(web, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
@@ -336,7 +336,10 @@ public class MainActivity extends Activity {
         settings.setJavaScriptCanOpenWindowsAutomatically(true);
         settings.setUserAgentString(settings.getUserAgentString() + " cc-dsh/1.0");
         if (android.os.Build.VERSION.SDK_INT >= 29) {
-            settings.setForceDark(WebSettings.FORCE_DARK_ON);
+            // The page ships its own light and dark palettes (mirrored from the
+            // desktop's ui-theme); the automatic WebView darkening would invert
+            // the light theme, so it stays off.
+            settings.setForceDark(WebSettings.FORCE_DARK_OFF);
         }
 
         CookieManager cookies = CookieManager.getInstance();
@@ -446,7 +449,7 @@ public class MainActivity extends Activity {
                         }
                     } else {
                         new AlertDialog.Builder(this)
-                                .setTitle("cc-dsh 1.0.0")
+                                .setTitle("cc-dsh 1.0.4")
                                 .setMessage("手机操控电脑上的 DeepSeek Harness。\n\n电脑端：DSH 插件 cc-dsh 提供网关与会话控制。\n手机端：本应用只负责配对、信任与承载界面。")
                                 .setPositiveButton("好", null)
                                 .show();
@@ -467,13 +470,13 @@ public class MainActivity extends Activity {
         LinearLayout column = new LinearLayout(this);
         column.setOrientation(LinearLayout.VERTICAL);
         column.setGravity(Gravity.CENTER);
-        column.setBackgroundColor(Color.parseColor("#0b1020"));
+        column.setBackgroundColor(getColor(R.color.dsh_bg));
         column.setPadding(dp(30), dp(30), dp(30), dp(30));
 
-        TextView title = text("连接中断", 22, "#e8f0ff", true);
+        TextView title = text("连接中断", 22, R.color.dsh_text, true);
         column.addView(title);
 
-        TextView detail = text(message, 14, "#8fa3c8", false);
+        TextView detail = text(message, 14, R.color.dsh_text_secondary, false);
         detail.setGravity(Gravity.CENTER);
         detail.setPadding(0, dp(12), 0, dp(24));
         column.addView(detail);
@@ -631,11 +634,11 @@ public class MainActivity extends Activity {
 
     // ---------------------------------------------------------------- ui helpers
 
-    private TextView text(String value, int sp, String color, boolean bold) {
+    private TextView text(String value, int sp, int colorRes, boolean bold) {
         TextView view = new TextView(this);
         view.setText(value);
         view.setTextSize(TypedValue.COMPLEX_UNIT_SP, sp);
-        view.setTextColor(Color.parseColor(color));
+        view.setTextColor(getColor(colorRes));
         if (bold) view.setTypeface(Typeface.DEFAULT_BOLD);
         return view;
     }
@@ -646,14 +649,14 @@ public class MainActivity extends Activity {
         button.setAllCaps(false);
         button.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
         GradientDrawable background = new GradientDrawable();
-        background.setCornerRadius(dp(14));
+        background.setCornerRadius(dp(12));
         if (ghost) {
-            background.setColor(Color.parseColor("#131c33"));
-            background.setStroke(dp(1), Color.parseColor("#22304f"));
-            button.setTextColor(Color.parseColor("#c7d5ee"));
+            background.setColor(getColor(R.color.dsh_ghost_bg));
+            background.setStroke(dp(1), getColor(R.color.dsh_ghost_border));
+            button.setTextColor(getColor(R.color.dsh_ghost_text));
         } else {
-            background.setColor(Color.parseColor("#2563eb"));
-            button.setTextColor(Color.WHITE);
+            background.setColor(getColor(R.color.dsh_accent));
+            button.setTextColor(getColor(R.color.dsh_accent_text));
         }
         button.setBackground(background);
         button.setPadding(dp(16), dp(12), dp(16), dp(12));
@@ -665,7 +668,7 @@ public class MainActivity extends Activity {
         button.setText(label);
         button.setAllCaps(false);
         button.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
-        button.setTextColor(Color.parseColor("#c7d5ee"));
+        button.setTextColor(getColor(R.color.dsh_text_secondary));
         button.setBackgroundColor(Color.TRANSPARENT);
         button.setPadding(dp(10), dp(4), dp(10), dp(4));
         button.setMinWidth(0);
@@ -677,14 +680,14 @@ public class MainActivity extends Activity {
         EditText input = new EditText(this);
         input.setHint(hint);
         input.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
-        input.setTextColor(Color.parseColor("#e8f0ff"));
-        input.setHintTextColor(Color.parseColor("#4b5f82"));
+        input.setTextColor(getColor(R.color.dsh_text));
+        input.setHintTextColor(getColor(R.color.dsh_text_tertiary));
         input.setInputType(type);
         input.setSingleLine(true);
         GradientDrawable background = new GradientDrawable();
-        background.setCornerRadius(dp(12));
-        background.setColor(Color.parseColor("#0f1729"));
-        background.setStroke(dp(1), Color.parseColor("#22304f"));
+        background.setCornerRadius(dp(10));
+        background.setColor(getColor(R.color.dsh_field_bg));
+        background.setStroke(dp(1), getColor(R.color.dsh_field_border));
         input.setBackground(background);
         input.setPadding(dp(14), dp(12), dp(14), dp(12));
         return input;
