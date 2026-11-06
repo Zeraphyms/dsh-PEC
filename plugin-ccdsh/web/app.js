@@ -901,6 +901,22 @@ async function openSession(id) {
   openStream(id)
 }
 
+async function archiveCurrent() {
+  const session = state.current
+  if (!session) return
+  try {
+    await api(`/api/sessions/${encodeURIComponent(session.id)}/archive`, { method: 'POST', body: {} })
+    toast('已归档')
+    closeStream()
+    state.sessions = state.sessions.filter((item) => item.id !== session.id)
+    state.view = 'sessions'
+    state.current = null
+    render()
+  } catch (error) {
+    toast('归档失败：' + error.message)
+  }
+}
+
 function newSession() {
   const workspaces = state.workspaces || []
   const choose = (body) => async () => {
@@ -933,9 +949,14 @@ function newSession() {
       class: 'option',
       onclick: () => {
         close()
-        choose({})()
+        choose(state.current?.cwd ? { cwd: state.current.cwd } : {})()
       },
-    }, [el('div', { class: 'name', text: '默认目录（不指定工作区）' })]),
+    }, [
+      el('div', { class: 'name' }, [
+        el('div', { text: '最近使用的工作区' }),
+        el('div', { class: 'desc', text: state.current?.cwd || '自动选一个最近活跃的工作区' }),
+      ]),
+    ]),
   ])
 }
 
@@ -1146,6 +1167,7 @@ function sessionSheet(close) {
     ['权限模式', () => { close(); openSheet(permissionSheet) }],
     ['远程审批', () => { close(); openSheet(approvalSheet) }],
     ['重命名', () => { close(); rename() }],
+    ['归档（从列表移除）', () => { close(); archiveCurrent() }],
   ]
   return [
     el('h2', { text: '会话操作' }),
@@ -1907,33 +1929,145 @@ function openScheduleForm(reload) {
 
 /* ------------------------------------------------------------------ settings */
 
+/** Create one llm-pi-ai route: the same write the desktop settings card performs. */
+function openProviderForm(meta, reload) {
+  const route = el('input', { placeholder: 'my-provider', autocapitalize: 'off', autocorrect: 'off' })
+  const display = el('input', { placeholder: '显示名称（可留空）' })
+  const baseURL = el('input', { placeholder: 'https://api.example.com/v1' })
+  const key = el('input', { placeholder: 'sk-...', type: 'password' })
+  const models = el('textarea', {
+    rows: '4',
+    placeholder: 'gpt-4o-mini\nclaude-sonnet-4 gpt-5',
+  })
+  const protocols = meta.protocols?.length ? meta.protocols : ['openai-completions']
+  const protocol = el('select', {}, protocols.map((value) =>
+    el('option', { value, selected: value === protocols[0] ? 'selected' : null }, [value]),
+  ))
+  const error = el('div', { class: 'err' })
+
+  models.style.width = '100%'
+  models.style.background = 'var(--bg-soft)'
+  models.style.border = '1px solid var(--line)'
+  models.style.borderRadius = '10px'
+  models.style.padding = '10px'
+  models.style.color = 'inherit'
+  models.style.fontFamily = 'ui-monospace, Consolas, monospace'
+
+  openSheet((close) => [
+    el('h2', { text: '添加供应商' }),
+    el('div', { class: 'small', text: '写进电脑端的 llm-pi-ai 配置，与桌面设置里的「添加供应商」等价。' }),
+    el('div', { class: 'field' }, [el('label', { text: '路由名（小写，仅字母数字与连字符）' }), route]),
+    el('div', { class: 'field' }, [el('label', { text: '显示名称' }), display]),
+    el('div', { class: 'field' }, [el('label', { text: '接口地址 baseURL' }), baseURL]),
+    el('div', { class: 'field' }, [el('label', { text: '协议' }), protocol]),
+    el('div', { class: 'field' }, [el('label', { text: 'API Key（可留空，用环境变量）' }), key]),
+    el('div', { class: 'field' }, [el('label', { text: '模型（每行一个：id 或 id 显示名）' }), models]),
+    error,
+    el('button', {
+      class: 'btn',
+      onclick: async () => {
+        error.textContent = ''
+        try {
+          const result = await api('/api/providers', {
+            method: 'POST',
+            body: {
+              route: route.value.trim(),
+              displayName: display.value.trim(),
+              baseURL: baseURL.value.trim(),
+              api: protocol.value,
+              apiKey: key.value,
+              models: models.value,
+              revision: meta.revision,
+            },
+          })
+          close()
+          toast(`已添加 ${result.route}（${result.models} 个模型）`)
+          reload()
+        } catch (cause) {
+          error.textContent = '添加失败：' + cause.message
+        }
+      },
+    }, '保存'),
+  ])
+}
+
 function openSettingsPanel() {
   if (!guardOpen('settings')) return null
   const view = panelShell({ title: 'DSH 设置', subtitle: '读取中…' })
   let namespaces = []
+  let providers = { providers: [], protocols: [], revision: 0 }
 
   async function load() {
     view.body.replaceChildren(el('div', { class: 'empty', text: '读取中…' }))
     try {
-      const data = await api('/api/settings')
+      const [data, providerData] = await Promise.all([
+        api('/api/settings'),
+        api('/api/providers').catch(() => ({ providers: [], protocols: [], revision: 0 })),
+      ])
       namespaces = data.namespaces || []
-      if (!namespaces.length) {
-        view.body.replaceChildren(el('div', { class: 'empty', text: '这个 DSH 没有可写的设置项' }))
-        return
-      }
-      view.setTitle('DSH 设置', `${namespaces.length} 组`)
-      view.body.replaceChildren(
-        ...namespaces.map((ns) =>
-          el('button', { class: 'file-row', onclick: () => openNamespace(ns) }, [
-            el('div', { class: 'ftype' }, [svg(ICON.sliders, 15)]),
-            el('div', { class: 'fname', text: ns.title || ns.ns }),
-            el('div', { class: 'fmeta', text: `${(ns.fields || []).length} 项` }),
-          ]),
-        ),
-      )
+      providers = providerData || providers
+      view.setTitle('DSH 设置', `${namespaces.length} 组 · ${providers.providers.length} 个供应商`)
+      view.body.replaceChildren(...providerSection(), ...namespaceSection())
     } catch (error) {
       view.body.replaceChildren(el('div', { class: 'empty', text: '读取失败：' + error.message }))
     }
+  }
+
+  /** Model providers: the same llm-pi-ai routes the desktop settings page writes. */
+  function providerSection() {
+    const rows = [
+      el('div', { class: 'small', style: 'margin:2px 4px 8px', text: '模型供应商（与电脑端「设置 → 模型」共用一份配置）' }),
+    ]
+    for (const provider of providers.providers) {
+      rows.push(
+        el('div', { class: 'file-row' }, [
+          el('div', { class: 'ftype' }, [svg(ICON.spark, 15)]),
+          el('div', { class: 'fname' }, [
+            el('div', { text: provider.displayName || provider.route }),
+            el('div', { class: 'small', text: `${provider.route} · ${provider.baseURL}` }),
+            el('div', {
+              class: 'small',
+              text: `${provider.models.length} 个模型 · 密钥${provider.keyConfigured ? '已配置' : '未配置'}`,
+            }),
+          ]),
+          el('button', {
+            class: 'chip',
+            style: 'border-color:#5b1b22;color:#ffb4b4',
+            onclick: async () => {
+              try {
+                await api('/api/providers/delete', { method: 'POST', body: { route: provider.route } })
+                toast('已删除 ' + provider.route)
+                load()
+              } catch (error) {
+                toast('删除失败：' + error.message)
+              }
+            },
+          }, ['删除']),
+        ]),
+      )
+    }
+    rows.push(
+      el('button', {
+        class: 'file-row',
+        onclick: () => openProviderForm(providers, load),
+      }, [
+        el('div', { class: 'ftype' }, [svg(ICON.plus, 15)]),
+        el('div', { class: 'fname', text: '添加供应商' }),
+      ]),
+    )
+    rows.push(el('div', { class: 'divider' }))
+    return rows
+  }
+
+  function namespaceSection() {
+    if (!namespaces.length) return [el('div', { class: 'empty', text: '这个 DSH 没有可写的设置项' })]
+    return namespaces.map((ns) =>
+      el('button', { class: 'file-row', onclick: () => openNamespace(ns) }, [
+        el('div', { class: 'ftype' }, [svg(ICON.sliders, 15)]),
+        el('div', { class: 'fname', text: ns.title || ns.ns }),
+        el('div', { class: 'fmeta', text: `${(ns.fields || []).length} 项` }),
+      ]),
+    )
   }
 
   function openNamespace(ns) {

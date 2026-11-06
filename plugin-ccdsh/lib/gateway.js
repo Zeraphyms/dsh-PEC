@@ -486,6 +486,19 @@ export class Gateway {
       return sendJson(res, 200, await this.dsh.deleteSchedule(body.session, body.id))
     }
 
+    // ---- providers (Settings → Models → add provider) -------------------
+    if (pathname === '/api/providers' && req.method === 'GET') {
+      return sendJson(res, 200, await this.dsh.providers())
+    }
+    if (pathname === '/api/providers' && req.method === 'POST') {
+      const body = await readJson(req)
+      return sendJson(res, 200, await this.dsh.addProvider(body))
+    }
+    if (pathname === '/api/providers/delete' && req.method === 'POST') {
+      const body = await readJson(req)
+      return sendJson(res, 200, await this.dsh.removeProvider(body.route))
+    }
+
     // ---- settings -------------------------------------------------------
     if (pathname === '/api/settings' && req.method === 'GET') {
       return sendJson(res, 200, await this.dsh.settings())
@@ -526,6 +539,9 @@ export class Gateway {
       if (action === 'permission') {
         const body = await readJson(req)
         return sendJson(res, 200, await this.dsh.setPermission(sessionId, body.preset))
+      }
+      if (action === 'archive') {
+        return sendJson(res, 200, await this.dsh.archiveSession(sessionId))
       }
       if (action === 'stream') return this.#stream(req, res, sessionId, url)
     }

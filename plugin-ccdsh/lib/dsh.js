@@ -32,10 +32,22 @@ export class Dsh {
     const controller = this.#svc('sessionController')
     if (!controller) return { items: [] }
     const value = await controller.list({}, this.#signal(15_000))
+    // The Host list includes archived rows; the desktop hides them through the
+    // registry's archive set, so the phone does the same.
+    const archived = this.#archivedIds()
     return {
       items: (value?.items || [])
-        .filter((item) => item?.origin !== 'subagent')
+        .filter((item) => item?.origin !== 'subagent' && !archived.has(String(item?.sessionId)))
         .map((item) => this.#summarize(item)),
+    }
+  }
+
+  #archivedIds() {
+    try {
+      const ids = this.#svc('workspaceRegistry')?.archivedSessionIds || []
+      return new Set(ids.map(String))
+    } catch {
+      return new Set()
     }
   }
 
@@ -205,8 +217,119 @@ export class Dsh {
     if (options.cwd) request.cwd = options.cwd
     if (options.workspaceId) request.workspaceId = options.workspaceId
     if (options.preset) request.agentPreset = options.preset
+    // A session created with neither would inherit the DSH process directory
+    // (the profile folder), which belongs to no workspace and therefore never
+    // shows up in the desktop's workspace grouping.
+    if (!request.cwd && !request.workspaceId) {
+      const fallback = this.#defaultWorkspace()
+      if (fallback) request.workspaceId = fallback.id
+    }
     const value = await controller.create(request)
     return { sessionId: value?.sessionId, agentPreset: value?.agentPreset }
+  }
+
+  #defaultWorkspace() {
+    const registry = this.#svc('workspaceRegistry')
+    if (!registry) return null
+    try {
+      const list = registry.list() || []
+      if (!list.length) return null
+      const sorted = [...list].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+      return sorted[0]
+    } catch {
+      return null
+    }
+  }
+
+  async archiveSession(sessionId) {
+    const registry = this.#svc('workspaceRegistry')
+    if (!registry || typeof registry.archiveSession !== 'function') throw new Error('归档服务不可用')
+    await registry.archiveSession(sessionId, { stopActivity: true })
+    return { archived: true, archivedSessionIds: [...(registry.archivedSessionIds || [])] }
+  }
+
+  /* ------------------------------------------------------------ providers */
+
+  async providers() {
+    const settings = this.#svc('settings')
+    const credentials = this.#svc('credentials')
+    const rows = settings?.describe?.({ redactSecrets: true }) || []
+    const row = rows.find((entry) => entry.ns === 'llm-pi-ai')
+    const declared = row?.value?.providers || {}
+    const providers = []
+    for (const [route, profile] of Object.entries(declared)) {
+      const keyRef = profile.apiKeyEnv || route.toUpperCase().replace(/[^A-Z0-9]+/g, '_')
+      let keyConfigured = false
+      try {
+        const info = await credentials?.describe?.(keyRef)
+        keyConfigured = Boolean(info?.configured)
+      } catch {
+        keyConfigured = false
+      }
+      providers.push({
+        route,
+        displayName: profile.displayName || route,
+        baseURL: profile.baseURL || '',
+        api: profile.api || '',
+        keyRef,
+        keyConfigured,
+        models: (profile.models || []).map((model) => ({ id: model.id, name: model.name || model.id })),
+      })
+    }
+    return {
+      revision: row?.revision ?? 0,
+      protocols: ['openai-completions', 'openai-responses', 'anthropic-messages'],
+      providers,
+    }
+  }
+
+  async addProvider(body = {}) {
+    const settings = this.#svc('settings')
+    const credentials = this.#svc('credentials')
+    if (!settings) throw new Error('设置服务不可用')
+    const route = String(body.route || '').trim().toLowerCase()
+    if (!/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/.test(route)) {
+      throw new Error('路由名只能用小写字母、数字和连字符，且必须以字母开头')
+    }
+    const baseURL = String(body.baseURL || '').trim()
+    if (!/^https?:\/\//i.test(baseURL)) throw new Error('接口地址必须是 http(s):// 开头')
+    const api = ['openai-completions', 'openai-responses', 'anthropic-messages'].includes(body.api)
+      ? body.api
+      : 'openai-completions'
+    const models = parseModelLines(body.models)
+    if (!models.length) throw new Error('至少要填一个模型 id')
+
+    const keyRef = route.toUpperCase().replace(/[^A-Z0-9]+/g, '_')
+    const profile = {
+      displayName: String(body.displayName || route).slice(0, 60),
+      apiKeyEnv: keyRef,
+      api,
+      baseURL,
+      models,
+    }
+    await this.#outsideHmr(() =>
+      settings.mutate('llm-pi-ai', [{ op: 'set', path: ['providers', route], value: profile }], body.revision),
+    )
+    const key = String(body.apiKey || '').trim()
+    if (key && credentials?.set) await credentials.set(keyRef, key)
+    this.log.info(`provider added: ${route} (${models.length} models)`)
+    return { route, keyRef, keyStored: Boolean(key), models: models.length }
+  }
+
+  async removeProvider(route) {
+    const settings = this.#svc('settings')
+    const credentials = this.#svc('credentials')
+    if (!settings) throw new Error('设置服务不可用')
+    const name = String(route || '').trim()
+    if (!name) throw new Error('缺少路由名')
+    await this.#outsideHmr(() => settings.mutate('llm-pi-ai', [{ op: 'unset', path: ['providers', name] }], undefined))
+    const keyRef = name.toUpperCase().replace(/[^A-Z0-9]+/g, '_')
+    try {
+      await credentials?.unset?.(keyRef)
+    } catch {
+      /* the key may not exist */
+    }
+    return { removed: true, route: name }
   }
 
   async prompt(sessionId, body = {}) {
@@ -1020,6 +1143,31 @@ function safeProcessPath(fs, target, base, name) {
     /* fall back to the joined path */
   }
   return path.join(base, name)
+}
+
+/** Parse "id" / "id 显示名" / "id|显示名" lines (or an array) into model objects. */
+function parseModelLines(input) {
+  if (Array.isArray(input)) {
+    return input
+      .map((entry) => {
+        if (typeof entry === 'string') return { id: entry.trim() }
+        if (entry && typeof entry === 'object' && entry.id) {
+          const id = String(entry.id).trim()
+          return { id, ...(entry.name ? { name: String(entry.name) } : {}) }
+        }
+        return null
+      })
+      .filter((model) => model && model.id)
+  }
+  return String(input || '')
+    .split(/[\n,]/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const [id, ...rest] = line.split(/[|\s]+/)
+      const name = rest.join(' ').trim()
+      return { id, ...(name ? { name } : {}) }
+    })
 }
 
 /** Human-readable recurrence for a schedule row. */
