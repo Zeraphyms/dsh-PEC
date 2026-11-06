@@ -26,8 +26,8 @@
   --dsw-border-l2: #0000001a;
   --dsw-border-l3: #0000001f;
   --dsw-border-l4: #00000029;
-  --dsw-brand: #4176e6;
-  --dsw-brand-soft: #e4edfd;
+  --dsw-brand: #426efe;            /* DeepSeek primary (com.deepseek.chat) */
+  --dsw-brand-soft: #e9efff;
   --dsw-success: #22c55e;
   --dsw-success-soft: #e8f8ee;
   --dsw-danger: #ec1313;
@@ -88,8 +88,8 @@ body[data-ds-dark-theme] {
   --dsw-border-l2: #ffffff1f;
   --dsw-border-l3: #ffffff29;
   --dsw-border-l4: #ffffff3d;
-  --dsw-brand: #5686fe;
-  --dsw-brand-soft: #34415b;
+  --dsw-brand: #507bf2;
+  --dsw-brand-soft: #26314c;
   --dsw-success: #22c55e;
   --dsw-success-soft: #1a2b21;
   --dsw-danger: #f25a5a;
@@ -621,12 +621,12 @@ a { color: var(--dsw-brand); text-decoration: none; }
 .field input:focus { border-color: var(--dsw-brand); box-shadow: var(--focus-ring); }
 .btn {
   background: var(--dsw-brand); color: var(--dsw-label-on-brand);
-  border-radius: var(--radius-md);
-  padding: 13px; font-weight: 500; text-align: center;
+  border-radius: 999px;
+  padding: 14px; font-weight: 500; text-align: center;
   font-size: var(--fs-ui);
 }
 .btn:active { opacity: .9; }
-.btn.ghost { background: transparent; border: 1px solid var(--dsw-border-l2); color: var(--dsw-label-primary); }
+.btn.ghost { background: var(--dsw-bg-base); border: 1px solid var(--dsw-border-l3); color: var(--dsw-label-primary); }
 .err { color: var(--dsw-danger); font-size: var(--fs-meta); min-height: 18px; }
 
 /* ---------------------------------------------------------------- toast */
@@ -673,7 +673,7 @@ a { color: var(--dsw-brand); text-decoration: none; }
 .field > input:focus,
 .field > select:focus { border-color: var(--dsw-brand); box-shadow: var(--focus-ring); }
 .field > select { appearance: none; }
-.btn { margin: 8px 6px 2px; width: calc(100% - 12px); padding: 12px; border: 0; border-radius: var(--radius-md); }
+.btn { margin: 8px 6px 2px; width: calc(100% - 12px); padding: 13px; border: 0; border-radius: 999px; }
 .kv { display: flex; gap: 8px; padding: 6px; font-size: calc(var(--fs-meta) + 0.5px); }
 .kv > span:first-child { color: var(--dsw-label-tertiary); min-width: 68px; }
 

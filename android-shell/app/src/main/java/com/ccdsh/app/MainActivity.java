@@ -649,7 +649,7 @@ public class MainActivity extends Activity {
         button.setAllCaps(false);
         button.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
         GradientDrawable background = new GradientDrawable();
-        background.setCornerRadius(dp(12));
+        background.setCornerRadius(dp(26));   // pill, like the DeepSeek app's buttons
         if (ghost) {
             background.setColor(getColor(R.color.dsh_ghost_bg));
             background.setStroke(dp(1), getColor(R.color.dsh_ghost_border));
@@ -659,6 +659,8 @@ public class MainActivity extends Activity {
             button.setTextColor(getColor(R.color.dsh_accent_text));
         }
         button.setBackground(background);
+        button.setElevation(0);
+        button.setStateListAnimator(null);
         button.setPadding(dp(16), dp(12), dp(16), dp(12));
         return button;
     }

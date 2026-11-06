@@ -7,10 +7,10 @@
     <color name="dsh_text_tertiary">#FF81858C</color>
     <color name="dsh_field_bg">#FFF5F6F7</color>
     <color name="dsh_field_border">#1A000000</color>
-    <color name="dsh_accent">#FF4176E6</color>
+    <color name="dsh_accent">#FF426EFE</color>
     <color name="dsh_accent_text">#FFFFFFFF</color>
     <color name="dsh_ghost_bg">#FFFFFFFF</color>
-    <color name="dsh_ghost_border">#1A000000</color>
+    <color name="dsh_ghost_border">#FFE6E6E6</color>
     <color name="dsh_ghost_text">#FF0F1115</color>
     <color name="dsh_danger">#FFEC1313</color>
     <color name="dsh_warn">#FFDD8629</color>
