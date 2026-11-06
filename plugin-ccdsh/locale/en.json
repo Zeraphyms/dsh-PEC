@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "cc-dsh Phone Gateway",
+    "description": "Connect the cc-dsh phone app to DeepSeek Harness on this computer: browse and continue sessions, switch models and presets, approve tool calls remotely, and manage plugins and settings."
+  }
+}

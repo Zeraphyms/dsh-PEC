@@ -1,0 +1,1779 @@
+/* cc-dsh mobile client: talks to the cc-dsh Host plugin on the PC. */
+
+const app = document.getElementById('app')
+const toastEl = document.getElementById('toast')
+
+const state = {
+  token: '',
+  server: null,
+  sessions: [],
+  models: { groups: [], default: null, failures: [] },
+  presets: [],
+  workspaces: [],
+  permissions: { options: [] },
+  plugins: [],
+  view: 'sessions',
+  current: null,
+  events: [],
+  live: null,
+  toolResults: new Map(),
+  running: false,
+  stream: null,
+  approvals: { pending: [], armedUntil: 0 },
+  filter: '',
+  loading: true,
+  error: '',
+}
+
+/* ------------------------------------------------------------------ utils */
+
+// Surface runtime errors on the phone instead of failing silently.
+window.addEventListener('error', (event) => {
+  const message = event?.message || 'unknown error'
+  try {
+    toast('页面出错：' + message, 4000)
+  } catch {
+    /* ignore */
+  }
+})
+window.addEventListener('unhandledrejection', (event) => {
+  const reason = event?.reason
+  if (reason && reason.code === 401) return // the pairing screen handles this
+  try {
+    toast('请求出错：' + (reason?.message || reason), 3000)
+  } catch {
+    /* ignore */
+  }
+})
+
+const el = (tag, props = {}, children = []) => {
+  const node = document.createElement(tag)
+  for (const [key, value] of Object.entries(props)) {
+    if (value == null || value === false) continue
+    if (key === 'class') node.className = value
+    else if (key === 'text') node.textContent = value
+    else if (key === 'html') node.innerHTML = value
+    else if (key.startsWith('on')) node.addEventListener(key.slice(2).toLowerCase(), value)
+    else if (key === 'dataset') Object.assign(node.dataset, value)
+    else node.setAttribute(key, value)
+  }
+  for (const child of [].concat(children)) {
+    if (child == null || child === false) continue
+    node.append(child.nodeType ? child : document.createTextNode(String(child)))
+  }
+  return node
+}
+
+const svg = (path, size = 20) => {
+  const ns = 'http://www.w3.org/2000/svg'
+  const node = document.createElementNS(ns, 'svg')
+  node.setAttribute('viewBox', '0 0 24 24')
+  node.setAttribute('width', size)
+  node.setAttribute('height', size)
+  node.setAttribute('fill', 'none')
+  node.setAttribute('stroke', 'currentColor')
+  node.setAttribute('stroke-width', '1.9')
+  node.setAttribute('stroke-linecap', 'round')
+  node.setAttribute('stroke-linejoin', 'round')
+  node.innerHTML = path
+  return node
+}
+
+const ICON = {
+  back: '<path d="M15 18l-6-6 6-6"/>',
+  send: '<path d="M4 12l16-8-6 16-3-7-7-1z"/>',
+  stop: '<rect x="6" y="6" width="12" height="12" rx="2"/>',
+  menu: '<circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  search: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>',
+  refresh: '<path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 4v4h-4"/>',
+  spark: '<path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/>',
+  phone: '<rect x="7" y="3" width="10" height="18" rx="2.5"/><path d="M11 18h2"/>',
+  clip: '<path d="M20 11.5l-7.6 7.6a4.5 4.5 0 0 1-6.4-6.4l8-8a3 3 0 0 1 4.3 4.3l-8 8a1.5 1.5 0 0 1-2.1-2.1l7.3-7.3"/>',
+  folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+  terminal: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3"/><path d="M13 15h4"/>',
+  sliders: '<path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/>',
+  file: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/>',
+}
+
+function toast(message, ms = 2200) {
+  toastEl.textContent = message
+  toastEl.hidden = false
+  clearTimeout(toast.timer)
+  toast.timer = setTimeout(() => {
+    toastEl.hidden = true
+  }, ms)
+}
+
+function ago(time) {
+  if (!time) return ''
+  const seconds = Math.max(1, Math.round((Date.now() - time) / 1000))
+  if (seconds < 60) return '刚刚'
+  const minutes = Math.round(seconds / 60)
+  if (minutes < 60) return `${minutes} 分钟前`
+  const hours = Math.round(minutes / 60)
+  if (hours < 24) return `${hours} 小时前`
+  const days = Math.round(hours / 24)
+  if (days < 30) return `${days} 天前`
+  return new Date(time).toLocaleDateString()
+}
+
+/* ------------------------------------------------------------------ auth */
+
+function readToken() {
+  try {
+    if (window.CCDSH && typeof window.CCDSH.token === 'function') {
+      const fromApp = window.CCDSH.token()
+      if (fromApp) return fromApp
+    }
+  } catch {}
+  const stored = localStorage.getItem('ccdsh_token') || ''
+  if (stored) return stored
+  const match = document.cookie.match(/(?:^|;\s*)ccdsh_token=([^;]+)/)
+  return match ? decodeURIComponent(match[1]) : ''
+}
+
+function rememberToken(token) {
+  state.token = token
+  try {
+    localStorage.setItem('ccdsh_token', token)
+    document.cookie = `ccdsh_token=${encodeURIComponent(token)}; path=/; max-age=31536000`
+  } catch {}
+}
+
+async function api(path, options = {}) {
+  const headers = Object.assign({ 'content-type': 'application/json' }, options.headers || {})
+  if (state.token) headers.authorization = `Bearer ${state.token}`
+  const response = await fetch(path, {
+    method: options.method || 'GET',
+    headers,
+    body: options.body ? JSON.stringify(options.body) : undefined,
+    credentials: 'same-origin',
+  })
+  if (response.status === 401) {
+    const error = new Error('unauthorized')
+    error.code = 401
+    throw error
+  }
+  const text = await response.text()
+  let data = null
+  try {
+    data = text ? JSON.parse(text) : null
+  } catch {
+    data = null
+  }
+  if (!response.ok) {
+    const error = new Error((data && (data.message || data.error)) || `HTTP ${response.status}`)
+    error.code = response.status
+    throw error
+  }
+  return data
+}
+
+/* ------------------------------------------------------------------ boot */
+
+async function boot() {
+  state.token = readToken()
+  if (!state.token) return renderPairing()
+
+  try {
+    const bootstrap = await api('/api/bootstrap')
+    state.server = bootstrap.server
+    state.sessions = bootstrap.sessions?.items || []
+    state.models = bootstrap.models?.groups ? bootstrap.models : { groups: [], default: null, failures: [] }
+    state.presets = Array.isArray(bootstrap.presets) ? bootstrap.presets : []
+    state.workspaces = Array.isArray(bootstrap.workspaces) ? bootstrap.workspaces : []
+    state.permissions = bootstrap.permissions || { options: [] }
+    state.plugins = Array.isArray(bootstrap.plugins) ? bootstrap.plugins : []
+    state.approvals = bootstrap.approvals || { pending: [], armedUntil: 0 }
+    state.loading = false
+    const remembered = localStorage.getItem('ccdsh_last_session')
+    if (remembered && state.sessions.some((s) => s.id === remembered)) openSession(remembered)
+    else render()
+  } catch (error) {
+    state.loading = false
+    if (error.code === 401) {
+      localStorage.removeItem('ccdsh_token')
+      renderPairing('配对已失效，请重新输入电脑上显示的 6 位配对码')
+      return
+    }
+    renderError(error)
+  }
+}
+
+function renderError(error) {
+  app.replaceChildren(
+    el('div', { class: 'pair' }, [
+      el('h1', { text: '连不上电脑' }),
+      el('p', { text: String(error?.message || error) }),
+      el('div', { class: 'err', text: '确认电脑上的 DSH 正在运行，且 cc-dsh 插件已启用。' }),
+      el('button', { class: 'btn', onclick: () => location.reload() }, '重试'),
+      el(
+        'button',
+        { class: 'btn ghost', onclick: () => { localStorage.removeItem('ccdsh_token'); location.reload() } },
+        '重新配对',
+      ),
+    ]),
+  )
+}
+
+/* ------------------------------------------------------------------ pairing */
+
+function deviceLabel() {
+  try {
+    if (window.CCDSH && typeof window.CCDSH.deviceName === 'function') {
+      const fromApp = window.CCDSH.deviceName()
+      if (fromApp) return fromApp
+    }
+  } catch {}
+  const ua = navigator.userAgent || ''
+  const platform = /Android/i.test(ua) ? 'Android' : /iPhone|iPad|iPod/i.test(ua) ? 'iOS' : /Windows/i.test(ua) ? 'Windows' : '浏览器'
+  const browser = /EdgA|Edg\//.test(ua) ? 'Edge' : /Chrome\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : /Firefox\//.test(ua) ? 'Firefox' : ''
+  const tag = Math.random().toString(36).slice(2, 6).toUpperCase()
+  return [platform, browser].filter(Boolean).join(' · ') + ' ' + tag
+}
+
+function renderPairing(message = '') {
+  const input = el('input', { placeholder: '123456', inputmode: 'numeric', maxlength: '6', autocomplete: 'off' })
+  const error = el('div', { class: 'err', text: message })
+  const submit = async () => {
+    const code = input.value.trim()
+    if (code && code.length !== 6) {
+      error.textContent = '配对码是 6 位数字；第一次配对也可以留空直接连接。'
+      return
+    }
+    submit.disabled = true
+    try {
+      const result = await api('/api/pair', {
+        method: 'POST',
+        body: {
+          code,
+          name: deviceLabel(),
+          platform: (() => {
+            try {
+              return window.CCDSH?.devicePlatform?.() || navigator.platform || ''
+            } catch {
+              return navigator.platform || ''
+            }
+          })(),
+          userAgent: navigator.userAgent || '',
+        },
+      })
+      rememberToken(result.token)
+      try {
+        // Keep the native shell's saved token in sync when pairing happens inside
+        // the page (first run, or after the PC revoked this phone).
+        window.CCDSH?.saveConnection?.(result.token, result.server?.name || '')
+      } catch {}
+      location.reload()
+    } catch (e) {
+      error.textContent = e.message === 'code-invalid' ? '配对码不对，请在电脑上确认新码' : '配对失败：' + e.message
+      submit.disabled = false
+    }
+  }
+  app.replaceChildren(
+    el('div', { class: 'pair' }, [
+      el('div', { class: 'boot-logo', text: 'cc-dsh' }),
+      el('h1', { text: '配对你的电脑' }),
+      el('p', { text: '第一次配对不用输码：手机和电脑在同一个 Wi-Fi（或都连着 Tailscale）时，直接点“连接”。之后再加手机才需要电脑上显示的 6 位配对码。' }),
+      el('div', { class: 'field' }, [el('label', { text: '配对码（第一次可留空）' }), input]),
+      error,
+      el('button', { class: 'btn', onclick: submit }, '连接'),
+      el('p', { class: 'small', text: '配对码在电脑 DSH 的“设置 → 手机连接”里，每 10 分钟自动更换。' }),
+    ]),
+  )
+  input.focus()
+}
+
+/* ------------------------------------------------------------------ shell */
+
+function render() {
+  if (state.view === 'chat' && state.current) return renderChat()
+  return renderSessions()
+}
+
+function topbar(title, subtitle, { back = false, right = [] } = {}) {
+  return el('div', { class: 'topbar' }, [
+    back
+      ? el('button', { class: 'icon-btn', onclick: () => { closeStream(); state.view = 'sessions'; state.current = null; render() } }, [svg(ICON.back)])
+      : el('button', { class: 'icon-btn', onclick: () => openSheet(serverSheet) }, [svg(ICON.phone)]),
+    el('h1', {}, [title, subtitle ? el('span', { class: 'sub', text: subtitle }) : null]),
+    ...right,
+  ])
+}
+
+/* ------------------------------------------------------------------ sessions */
+
+function renderSessions() {
+  const query = state.filter.trim().toLowerCase()
+  const sessions = state.sessions.filter((session) => {
+    if (!query) return true
+    return (session.title || '') .toLowerCase().includes(query) || (session.cwd || '').toLowerCase().includes(query)
+  })
+
+  const list = el('div', { class: 'list' }, [
+    el('div', { class: 'search' }, [
+      svg(ICON.search, 18),
+      el('input', {
+        placeholder: '搜索会话 / 工作区',
+        value: state.filter,
+        oninput: (event) => {
+          state.filter = event.target.value
+          renderSessions()
+        },
+      }),
+    ]),
+    ...(sessions.length === 0
+      ? [el('div', { class: 'empty', text: query ? '没有匹配的会话' : '还没有会话，点右下角新建一个' })]
+      : sessions.map(sessionRow)),
+  ])
+
+  // Replace, never append: this view re-renders on every keystroke and on the
+  // 15s refresh, and appending stacked whole screens on top of each other.
+  app.replaceChildren(
+    topbar('cc-dsh', state.server?.name || '已连接', {
+      right: [
+        el('button', { class: 'icon-btn', title: '刷新', onclick: () => boot() }, [svg(ICON.refresh)]),
+      ],
+    }),
+    list,
+    el('button', { class: 'fab', onclick: newSession }, [svg(ICON.plus, 18), '新会话']),
+  )
+}
+
+function sessionRow(session) {
+  const title = session.title || '未命名会话'
+  return el('div', {
+    class: `session${session.running ? ' running' : ''}`,
+    onclick: () => openSession(session.id),
+  }, [
+    el('div', { class: 'dot' }),
+    el('div', { class: 'body' }, [
+      el('div', { class: `title${session.title ? '' : ' blank'}`, text: title }),
+      el('div', { class: 'meta' }, [
+        el('span', { text: ago(session.updatedAt) }),
+        session.cwd ? el('span', { class: 'tag', text: shortPath(session.cwd) }) : null,
+        session.running ? el('span', { class: 'tag', text: '运行中' }) : null,
+      ]),
+    ]),
+  ])
+}
+
+function shortPath(path) {
+  const parts = String(path).split(/[\\/]/).filter(Boolean)
+  return parts.slice(-1)[0] || path
+}
+
+/* ------------------------------------------------------------------ chat */
+
+function renderChat() {
+  const session = state.current
+  const title = session.title || '未命名会话'
+  const meta = [session.running ? '运行中' : '空闲', modelLabel()].filter(Boolean).join(' · ')
+
+  const chat = el('div', { class: 'chat', id: 'chat' }, chatRows())
+  const composer = composerNode()
+  const approval = approvalStrip()
+
+  app.replaceChildren(
+    topbar(title, meta, {
+      back: true,
+      right: [el('button', { class: 'icon-btn', onclick: () => openSheet(sessionSheet) }, [svg(ICON.menu)])],
+    }),
+    approval || '',
+    chat,
+    composer,
+  )
+  scrollToBottom()
+}
+
+function chatRows() {
+  const rows = []
+  let lastAssistant = null
+
+  for (const event of state.events) {
+    if (!event || !event.type) continue
+    // Only append-origin surface events belong in the transcript; runtime
+    // context and tool-addition rows are model-facing bookkeeping.
+    if (event.surfaceOp && event.surfaceOp !== 'append') continue
+    if (event.type === 'user/message') {
+      if (event.data?.source?.kind !== 'user') continue
+      const text = textOf(event.data?.content)
+      if (text) rows.push(el('div', { class: 'row user' }, [el('div', { class: 'bubble', text })]))
+      continue
+    }
+    if (event.type === 'assistant/message') {
+      const message = event.data?.message
+      const text = textOf(message?.content)
+      const reasoning = reasoningOf(message?.content)
+      if (!text && !reasoning) continue
+      const bubble = el('div', { class: 'bubble' }, [
+        text ? el('div', { text }) : null,
+        reasoning ? reasoningNode(reasoning) : null,
+      ])
+      rows.push(el('div', { class: 'row assistant' }, [bubble]))
+      lastAssistant = bubble
+      continue
+    }
+    if (event.type === 'tool/call') {
+      rows.push(toolRow(event.data))
+      continue
+    }
+    if (event.type === 'tool/result') {
+      attachToolResult(event.data)
+      continue
+    }
+    if (event.type === 'turn/end' && event.data?.reason?.kind === 'error') {
+      rows.push(el('div', { class: 'row note' }, [
+        el('div', { class: 'note-pill', text: '本回合出错：' + (event.data.reason.error?.message || '未知错误') }),
+      ]))
+      continue
+    }
+    if (event.type === 'turn/end' && event.data?.reason?.kind === 'aborted') {
+      rows.push(el('div', { class: 'row note' }, [el('div', { class: 'note-pill', text: '已停止' })]))
+    }
+  }
+
+  // Tool calls already rendered inline; append their result cards in order.
+  for (const card of state.toolResults.values()) {
+    if (card.parent && !card.parent.isConnected) rows.push(card.parent)
+  }
+
+  if (state.live && (state.live.text || state.live.reasoning)) {
+    rows.push(
+      el('div', { class: 'row assistant' }, [
+        el('div', { class: 'bubble', id: 'live-bubble' }, [
+          state.live.text ? el('div', { id: 'live-text', text: state.live.text }) : null,
+          state.live.reasoning ? reasoningNode(state.live.reasoning) : null,
+        ]),
+      ]),
+    )
+  }
+
+  if (rows.length === 0) rows.push(el('div', { class: 'empty', text: '开始和电脑上的 DSH 对话吧' }))
+  return rows
+}
+
+function reasoningNode(text) {
+  return el('details', { class: 'reasoning' }, [
+    el('summary', { text: `思考过程 · ${text.length} 字` }),
+    el('div', { text }),
+  ])
+}
+
+function toolRow(data) {
+  const name = data?.name || 'tool'
+  let args = data?.arguments || ''
+  try {
+    args = JSON.stringify(JSON.parse(args), null, 1)
+  } catch {}
+  const status = el('span', { class: 'tool-status', text: '运行中' })
+  const body = el('div', { class: 'tool-body', text: args.slice(0, 4000) })
+  // Collapsed like the desktop transcript; open while the call is running.
+  const card = el('details', { class: 'tool', open: 'open', dataset: { callId: data?.callId || '' } }, [
+    el('summary', { class: 'tool-head' }, [el('span', { class: 'tool-name', text: name }), status]),
+    body,
+  ])
+  if (data?.callId) state.toolResults.get(data.callId)?.node?.remove()
+  return card
+}
+
+function attachToolResult(data) {
+  const callId = data?.message?.toolCallId
+  const card = document.querySelector(`.tool[data-call-id="${CSS.escape(callId || '')}"]`)
+  if (!card) return
+  const status = card.querySelector('.tool-status')
+  const body = card.querySelector('.tool-body')
+  const failed = Boolean(data?.error) || Boolean(data?.message?.isError)
+  if (status) {
+    status.textContent = failed ? '失败' : '完成'
+    status.className = 'tool-status ' + (failed ? 'err' : 'ok')
+  }
+  if (body) {
+    const text = textOf(data?.message?.content) || String(data?.error?.reason || '')
+    if (text) {
+      body.textContent = (failed ? '错误：' : '') + text.slice(0, 6000)
+      body.style.maxHeight = failed ? '260px' : '160px'
+    }
+  }
+  // Finished calls fold away; the user can still open one to read the output.
+  if (card.tagName === 'DETAILS') card.removeAttribute('open')
+}
+
+function textOf(content) {
+  if (!Array.isArray(content)) return ''
+  return content
+    .filter((block) => block && (block.type === 'text' || typeof block.text === 'string') && block.type !== 'reasoning')
+    .map((block) => block.text || '')
+    .join('\n')
+}
+
+function reasoningOf(content) {
+  if (!Array.isArray(content)) return ''
+  return content
+    .filter((block) => block && block.type === 'reasoning')
+    .map((block) => block.text || '')
+    .join('\n')
+}
+
+function composerNode() {
+  const input = el('textarea', {
+    rows: '1',
+    placeholder: state.current?.running ? '继续追加指令…' : '发给电脑上的 DSH…',
+    oninput: (event) => {
+      event.target.style.height = 'auto'
+      event.target.style.height = Math.min(event.target.scrollHeight, 140) + 'px'
+    },
+    onkeydown: (event) => {
+      if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+        event.preventDefault()
+        send()
+      }
+    },
+  })
+
+  const picker = el('input', {
+    type: 'file',
+    accept: 'image/png,image/jpeg,image/webp,image/gif',
+    multiple: 'multiple',
+    style: 'display:none',
+    onchange: (event) => addFiles([...event.target.files])
+  })
+
+  const attachButton = el('button', {
+    class: 'icon-btn',
+    style: 'width:38px;height:38px;border-radius:50%',
+    title: '添加图片',
+    onclick: () => picker.click(),
+  }, [svg(ICON.clip, 18)])
+
+  const attachRow = el('div', { class: 'attach-row', id: 'attach-row' })
+
+  function renderAttachments() {
+    const draft = state.draft || []
+    attachRow.replaceChildren(
+      ...draft.map((item, index) =>
+        el('div', { class: 'attach' }, [
+          el('img', { src: item.preview }),
+          el('button', { class: 'x', onclick: () => { draft.splice(index, 1); renderAttachments() } }, '×'),
+        ]),
+      ),
+    )
+    attachRow.style.display = draft.length ? 'flex' : 'none'
+  }
+
+  async function addFiles(files) {
+    for (const file of files.slice(0, 4)) {
+      if (!file.type.startsWith('image/')) {
+        toast('目前只支持图片；文件请用电脑端')
+        continue
+      }
+      if (file.size > 4 * 1024 * 1024) {
+        toast(`${file.name} 超过 4MB，先压缩再发`)
+        continue
+      }
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(String(reader.result))
+        reader.onerror = () => reject(reader.error)
+        reader.readAsDataURL(file)
+      })
+      const [meta, base64] = dataUrl.split(',')
+      const mediaType = (meta.match(/data:([^;]+)/) || [])[1] || file.type
+      state.draft = state.draft || []
+      state.draft.push({ mediaType, data: base64, name: file.name, preview: dataUrl })
+    }
+    renderAttachments()
+  }
+
+  const button = el('button', {
+    class: `send${state.current?.running ? ' stop' : ''}`,
+    onclick: () => (state.current?.running ? stop() : send()),
+  }, [svg(state.current?.running ? ICON.stop : ICON.send, 19)])
+  if (!state.current?.running && !input.value.trim()) button.disabled = false
+
+  async function send() {
+    const text = input.value.trim()
+    const images = (state.draft || []).map(({ mediaType, data }) => ({ type: 'image', mediaType, data }))
+    if (!text && images.length === 0) return
+    input.value = ''
+    input.style.height = 'auto'
+    state.draft = []
+    renderAttachments()
+    try {
+      await api(`/api/sessions/${encodeURIComponent(state.current.id)}/prompt`, {
+        method: 'POST',
+        body: { text: text || '（图片）', images },
+      })
+      state.current.running = true
+      refreshSessionMeta()
+    } catch (error) {
+      toast('发送失败：' + error.message)
+      input.value = text
+    }
+  }
+
+  async function stop() {
+    try {
+      await api(`/api/sessions/${encodeURIComponent(state.current.id)}/cancel`, { method: 'POST', body: {} })
+      toast('已请求停止')
+    } catch (error) {
+      toast('停止失败：' + error.message)
+    }
+  }
+
+  renderAttachments()
+
+  return el('div', { class: 'composer-wrap' }, [
+    attachRow,
+    picker,
+    el('div', { class: 'composer-card' }, [
+      input,
+      el('div', { class: 'composer-tools' }, [
+        el('div', { class: 'hint-row', id: 'hints' }, hintChips()),
+        el('div', { class: 'composer-actions' }, [attachButton, button]),
+      ]),
+    ]),
+  ])
+}
+
+function hintChips() {
+  const chips = []
+  const model = currentModel()
+  chips.push(
+    el('button', { class: 'chip on', onclick: () => openSheet(modelSheet) }, [
+      svg(ICON.spark, 12),
+      model ? model.name : '选择模型',
+    ]),
+  )
+  const preset = state.current?.agentPreset || state.current?.projections?.agentPreset
+  chips.push(el('button', { class: 'chip', onclick: () => openSheet(presetSheet) }, [preset || '默认模式']))
+  const permission = state.current?.permission
+  if (permission) {
+    const short = { 'danger-full-access': '完全访问', 'workspace-write': '仅工作区', 'read-only': '只读' }[permission] || permission
+    chips.push(el('button', { class: 'chip', onclick: () => openSheet(permissionSheet) }, [short]))
+  }
+  const armed = state.approvals.armedUntil > Date.now()
+  chips.push(
+    el('button', {
+      class: `chip${armed ? ' warn' : ''}`,
+      onclick: () => openSheet(approvalSheet),
+    }, [armed ? '审批已接管' : '审批']),
+  )
+  return chips
+}
+
+function currentModel() {
+  const selection = state.current?.model || state.models.default
+  if (!selection) return null
+  for (const group of state.models.groups) {
+    for (const model of group.models) {
+      if (model.id === selection.model) return { ...model, provider: group.id }
+    }
+  }
+  return { id: selection.model, name: selection.model, provider: selection.provider }
+}
+
+function modelLabel() {
+  const model = currentModel()
+  return model ? model.name : ''
+}
+
+function refreshSessionMeta() {
+  const sub = document.querySelector('.topbar .sub')
+  if (sub) sub.textContent = [state.current?.running ? '运行中' : '空闲', modelLabel()].filter(Boolean).join(' · ')
+  const hints = document.getElementById('hints')
+  if (hints) hints.replaceChildren(...hintChips())
+  const button = document.querySelector('.send')
+  if (button) button.replaceChildren(svg(state.current?.running ? ICON.stop : ICON.send, 19))
+}
+
+function approvalStrip() {
+  const pending = state.approvals.pending || []
+  if (!pending.length) return null
+  return el('div', { class: 'approval-strip', style: 'padding:8px 12px 0' }, [
+    el('div', {
+      class: 'tool',
+      style: 'border-color:#6b4a12;background:#241a06',
+    }, [
+      el('div', { class: 'tool-head' }, [
+        el('span', { class: 'tool-name', style: 'color:#fbbf24' }, '等待你批准'),
+        el('span', { class: 'tool-status', text: `${pending.length} 项` }),
+      ]),
+      ...pending.map((item) =>
+        el('div', { style: 'margin-top:10px' }, [
+          el('div', { text: item.title || item.tool || '工具调用', style: 'font-size:13px;color:#ffd9a0' }),
+          item.detail ? el('div', { class: 'tool-body', text: String(item.detail).slice(0, 800) }) : null,
+          el('div', { style: 'display:flex;gap:10px;margin-top:10px' }, [
+            el('button', {
+              class: 'chip on',
+              onclick: () => answerApproval(item.id, 'allow'),
+            }, '允许'),
+            el('button', {
+              class: 'chip',
+              style: 'border-color:#5b1b22;color:#ffb4b4',
+              onclick: () => answerApproval(item.id, 'deny'),
+            }, '拒绝'),
+          ]),
+        ]),
+      ),
+    ]),
+  ])
+}
+
+async function answerApproval(id, decision) {
+  try {
+    await api(`/api/approvals/${encodeURIComponent(id)}`, { method: 'POST', body: { decision } })
+    state.approvals.pending = (state.approvals.pending || []).filter((item) => item.id !== id)
+    render()
+  } catch (error) {
+    toast('提交失败：' + error.message)
+  }
+}
+
+function scrollToBottom() {
+  requestAnimationFrame(() => {
+    const chat = document.getElementById('chat')
+    if (chat) chat.scrollTop = chat.scrollHeight
+  })
+}
+
+/* ------------------------------------------------------------------ stream */
+
+function closeStream() {
+  if (state.stream) {
+    state.stream.close()
+    state.stream = null
+  }
+}
+
+function openStream(sessionId) {
+  closeStream()
+  const stream = new EventSource(`/api/sessions/${encodeURIComponent(sessionId)}/stream`)
+  state.stream = stream
+
+  stream.addEventListener('frame', (event) => {
+    let frame
+    try {
+      frame = JSON.parse(event.data)
+    } catch {
+      return
+    }
+    handleFrame(frame)
+  })
+  stream.addEventListener('approvals', (event) => {
+    try {
+      state.approvals = JSON.parse(event.data)
+      if (state.view === 'chat') {
+        const strip = document.querySelector('.approval-strip')
+        if (strip) strip.replaceWith(approvalStrip() || el('div'))
+        else render()
+      }
+    } catch {}
+  })
+  stream.addEventListener('error', () => {
+    // EventSource retries on its own; the snapshot resets state on reconnect.
+  })
+}
+
+function handleFrame(frame) {
+  if (!frame || !frame.type) return
+  if (frame.type === 'snapshot') {
+    state.events = (frame.records || []).map((record) => record.event).filter(Boolean)
+    const values = frame.projections?.values || {}
+    if (values.title) state.current.title = values.title
+    if (frame.header?.agentPreset) state.current.agentPreset = frame.header.agentPreset
+    if (values.agentPreset) state.current.agentPreset = values.agentPreset
+    if (values.modelSelection?.model) state.current.model = values.modelSelection
+    if (values.permissions?.currentValue) state.current.permission = values.permissions.currentValue
+    if (values.workingDirectory) state.current.cwd = values.workingDirectory
+    const headerEvent = [...state.events].reverse().find((event) => event.type === 'request/header')
+    const config = headerEvent?.data?.header?.config
+    if (config?.provider && config?.model) state.current.model = { provider: config.provider, model: config.model }
+    state.live = null
+    state.running = Boolean(state.current?.running)
+    if (state.view === 'chat') render()
+    return
+  }
+  if (frame.type === 'event') {
+    const event = frame.event
+    if (!event) return
+    state.events.push(event)
+    if (event.type === 'assistant/message') {
+      state.live = null
+    }
+    if (event.type === 'request/header') {
+      const config = event.data?.header?.config
+      if (config?.provider && config?.model) {
+        state.current.model = { provider: config.provider, model: config.model }
+      }
+    }
+    if (event.type === 'session/title' && event.data?.title) {
+      state.current.title = event.data.title
+      const summary = state.sessions.find((session) => session.id === state.current.id)
+      if (summary) summary.title = event.data.title
+      if (state.view === 'chat') {
+        const heading = document.querySelector('.topbar h1')
+        if (heading && heading.firstChild) heading.firstChild.textContent = event.data.title
+      }
+    }
+    if (event.type === 'agent-preset/selected' && event.data?.agentPreset) {
+      state.current.agentPreset = event.data.agentPreset
+    }
+    if (event.type === 'permission/preset' && event.data?.preset) {
+      state.current.permission = event.data.preset
+    }
+    if (event.type === 'turn/start') state.current.running = true
+    if (event.type === 'turn/end') state.current.running = false
+    if (state.view === 'chat') {
+      if (event.type === 'assistant/message' || event.type === 'user/message' || event.type === 'turn/end') {
+        render()
+      } else if (event.type === 'tool/call') {
+        const chat = document.getElementById('chat')
+        if (chat) {
+          chat.append(toolRow(event.data))
+          scrollToBottom()
+        }
+      } else if (event.type === 'tool/result') {
+        attachToolResult(event.data)
+      }
+    }
+    return
+  }
+  if (frame.type === 'assistant-stream') {
+    const inner = frame.frame
+    if (!inner) return
+    if (inner.type === 'start') {
+      state.live = { text: '', reasoning: '' }
+      return
+    }
+    if (inner.type === 'chunk') {
+      const chunk = inner.chunk || {}
+      if (!state.live) state.live = { text: '', reasoning: '' }
+      if (chunk.type === 'text-delta') state.live.text += chunk.text || ''
+      else if (chunk.type === 'reasoning-delta') state.live.reasoning += chunk.text || ''
+      updateLive()
+      return
+    }
+    if (inner.type === 'end') {
+      updateLive()
+    }
+  }
+}
+
+function updateLive() {
+  if (state.view !== 'chat' || !state.live) return
+  const chat = document.getElementById('chat')
+  if (!chat) return
+  let bubble = document.getElementById('live-bubble')
+  if (!bubble) {
+    bubble = el('div', { class: 'row assistant' }, [
+      el('div', { class: 'bubble', id: 'live-bubble' }, [
+        el('div', { id: 'live-text' }),
+        el('div', { id: 'live-reasoning', class: 'reasoning', hidden: 'hidden' }),
+      ]),
+    ]).firstChild
+    chat.append(bubble.parentElement)
+  }
+  const textNode = document.getElementById('live-text')
+  if (textNode) textNode.textContent = state.live.text
+  const reasoningNodeEl = document.getElementById('live-reasoning')
+  if (reasoningNodeEl) {
+    reasoningNodeEl.hidden = !state.live.reasoning
+    reasoningNodeEl.textContent = state.live.reasoning
+  }
+  scrollToBottom()
+}
+
+async function openSession(id) {
+  const summary = state.sessions.find((session) => session.id === id)
+  state.current = summary ? { ...summary } : { id, title: '' }
+  state.events = []
+  state.live = null
+  state.view = 'chat'
+  localStorage.setItem('ccdsh_last_session', id)
+  render()
+  openStream(id)
+}
+
+function newSession() {
+  const workspaces = state.workspaces || []
+  const choose = (body) => async () => {
+    try {
+      const created = await api('/api/sessions', { method: 'POST', body })
+      const session = { id: created.sessionId, title: '', running: false, updatedAt: Date.now() }
+      state.sessions.unshift(session)
+      openSession(session.id)
+    } catch (error) {
+      toast('新建失败：' + error.message)
+    }
+  }
+  openSheet((close) => [
+    el('h2', { text: '在哪个工作区新建会话' }),
+    ...workspaces.map((workspace) =>
+      el('button', {
+        class: 'option',
+        onclick: () => {
+          close()
+          choose({ workspaceId: workspace.id })()
+        },
+      }, [
+        el('div', { class: 'name' }, [
+          el('div', { text: workspace.title || workspace.path }),
+          el('div', { class: 'desc', text: workspace.path || '' }),
+        ]),
+      ]),
+    ),
+    el('button', {
+      class: 'option',
+      onclick: () => {
+        close()
+        choose({})()
+      },
+    }, [el('div', { class: 'name', text: '默认目录（不指定工作区）' })]),
+  ])
+}
+
+/* ------------------------------------------------------------------ sheets */
+
+function openSheet(builder) {
+  const mask = el('div', { class: 'sheet-mask', onclick: (event) => { if (event.target === mask) close() } })
+  const sheet = el('div', { class: 'sheet' }, [el('div', { class: 'sheet-grab' }), ...builder(close)])
+  mask.append(sheet)
+  document.body.append(mask)
+  function close() {
+    mask.remove()
+  }
+  return close
+}
+
+function serverSheet(close) {
+  const info = state.server || {}
+  const urls = info.urls || []
+  return [
+    el('h2', { text: '这台电脑' }),
+    el('div', { class: 'option' }, [el('div', { class: 'name' }, [
+      el('div', { text: info.name || 'cc-dsh 网关' }),
+      el('div', { class: 'desc', text: urls.map((u) => u.url).join('  ·  ') }),
+    ])]),
+    el('div', { class: 'divider' }),
+    el('button', {
+      class: 'option',
+      onclick: () => {
+        close()
+        openSheet(pluginsSheet)
+      },
+    }, [
+      el('div', { class: 'name' }, [
+        el('div', { text: '插件管理' }),
+        el('div', { class: 'desc', text: `${(state.plugins || []).filter((p) => p.enabled).length} / ${(state.plugins || []).length} 已启用` }),
+      ]),
+    ]),
+    el('button', {
+      class: 'option',
+      onclick: () => {
+        close()
+        openSchedulesPanel()
+      },
+    }, [
+      el('div', { class: 'name' }, [
+        el('div', { text: '计划任务' }),
+        el('div', { class: 'desc', text: '这台电脑上的定时提醒' }),
+      ]),
+    ]),
+    el('button', {
+      class: 'option',
+      onclick: () => {
+        close()
+        openSettingsPanel()
+      },
+    }, [
+      el('div', { class: 'name' }, [
+        el('div', { text: 'DSH 设置' }),
+        el('div', { class: 'desc', text: '主题、语言、权限默认值、模型默认值等' }),
+      ]),
+    ]),
+    el('button', {
+      class: 'option',
+      onclick: () => {
+        close()
+        refreshAll().then(() => toast('已刷新'))
+      },
+    }, [el('div', { class: 'name', text: '刷新会话与插件' })]),
+    el('button', {
+      class: 'option',
+      onclick: () => {
+        try {
+          window.CCDSH?.forget?.()
+        } catch {}
+        localStorage.removeItem('ccdsh_token')
+        close()
+        renderPairing('已从手机端断开，请重新输入电脑上的配对码')
+      },
+    }, [el('div', { class: 'name', text: '断开并重新配对' })]),
+  ]
+}
+
+async function refreshAll() {
+  try {
+    const bootstrap = await api('/api/bootstrap')
+    state.sessions = bootstrap.sessions?.items || state.sessions
+    state.models = bootstrap.models?.groups ? bootstrap.models : state.models
+    state.presets = Array.isArray(bootstrap.presets) ? bootstrap.presets : state.presets
+    state.workspaces = Array.isArray(bootstrap.workspaces) ? bootstrap.workspaces : state.workspaces
+    state.permissions = bootstrap.permissions || state.permissions
+    state.plugins = Array.isArray(bootstrap.plugins) ? bootstrap.plugins : state.plugins
+    state.approvals = bootstrap.approvals || state.approvals
+    render()
+  } catch (error) {
+    toast('刷新失败：' + error.message)
+  }
+}
+
+function permissionSheet(close) {
+  const options = state.permissions?.options || []
+  const current = state.current?.permission || state.permissions?.defaultPreset
+  return [
+    el('h2', { text: '权限模式（沙箱 + 审批）' }),
+    ...options.map((option) =>
+      el('button', {
+        class: `option${option.id === current ? ' sel' : ''}`,
+        onclick: async () => {
+          try {
+            await api(`/api/sessions/${encodeURIComponent(state.current.id)}/permission`, {
+              method: 'POST',
+              body: { preset: option.id },
+            })
+            state.current.permission = option.id
+            close()
+            refreshSessionMeta()
+            toast('已切换到 ' + (option.name || option.id))
+          } catch (error) {
+            toast('切换失败：' + error.message)
+          }
+        },
+      }, [
+        el('div', { class: 'name' }, [
+          el('div', { text: option.name || option.id }),
+          el('div', { class: 'desc', text: option.description || [option.sandbox, option.approval].filter(Boolean).join(' · ') }),
+        ]),
+        option.id === current ? el('div', { class: 'check', text: '✓' }) : null,
+      ]),
+    ),
+    options.length === 0 ? el('div', { class: 'small', text: '电脑上没有可用的权限预设' }) : null,
+  ]
+}
+
+function pluginsSheet(close) {
+  const items = (state.plugins || [])
+    .filter((plugin) => !plugin.readOnly)
+    .sort((a, b) => Number(b.enabled) - Number(a.enabled) || String(a.moduleName).localeCompare(String(b.moduleName)))
+  return [
+    el('h2', { text: '插件' }),
+    el('div', { class: 'small', text: '开关立即作用到电脑上的 DSH；个别插件需要重启 DSH 才生效。系统插件不在列表里。' }),
+    ...items.map((plugin) =>
+      el('button', {
+        class: 'option',
+        onclick: async () => {
+          try {
+            const result = await api(`/api/plugins/${encodeURIComponent(plugin.entryId)}/toggle`, {
+              method: 'POST',
+              body: { enabled: !plugin.enabled },
+            })
+            plugin.enabled = !plugin.enabled
+            close()
+            openSheet(pluginsSheet)
+            toast(result.application === 'restart-required' ? '已保存，重启 DSH 后生效' : plugin.enabled ? '已启用' : '已停用')
+          } catch (error) {
+            toast('操作失败：' + error.message)
+          }
+        },
+      }, [
+        el('div', { class: 'name' }, [
+          el('div', { text: plugin.moduleName || plugin.entryId }),
+          el('div', { class: 'desc', text: plugin.readOnly ? '由系统管理，不能在这里开关' : plugin.phase || '' }),
+        ]),
+        el('div', { class: `chip${plugin.enabled ? ' on' : ''}`, text: plugin.enabled ? '启用' : '停用' }),
+      ]),
+    ),
+    items.length === 0 ? el('div', { class: 'small', text: '没有读取到插件列表' }) : null,
+  ]
+}
+
+function sessionSheet(close) {
+  const rename = () => {
+    const input = el('input', { value: state.current.title || '', placeholder: '会话标题' })
+    const sheet = openSheet((done) => [
+      el('h2', { text: '重命名会话' }),
+      el('div', { class: 'field' }, [input]),
+      el('button', {
+        class: 'btn',
+        onclick: async () => {
+          try {
+            await api(`/api/sessions/${encodeURIComponent(state.current.id)}/rename`, {
+              method: 'POST',
+              body: { title: input.value.trim() },
+            })
+            state.current.title = input.value.trim()
+            const summary = state.sessions.find((session) => session.id === state.current.id)
+            if (summary) summary.title = state.current.title
+            done()
+            close()
+            render()
+          } catch (error) {
+            toast('重命名失败：' + error.message)
+          }
+        },
+      }, '保存'),
+    ])
+  }
+  const decisions = [
+    ['工作区文件', () => { close(); openFilesPanel() }],
+    ['终端', () => { close(); openTerminalPanel() }],
+    ['目标（Goal）', () => { close(); openGoalPanel() }],
+    ['切换模型', () => { close(); openSheet(modelSheet) }],
+    ['切换模式（预设）', () => { close(); openSheet(presetSheet) }],
+    ['权限模式', () => { close(); openSheet(permissionSheet) }],
+    ['远程审批', () => { close(); openSheet(approvalSheet) }],
+    ['重命名', () => { close(); rename() }],
+  ]
+  return [
+    el('h2', { text: '会话操作' }),
+    ...decisions.map(([label, action]) => el('button', { class: 'option', onclick: action }, [el('div', { class: 'name', text: label })])),
+  ]
+}
+
+function modelSheet(close) {
+  const selection = state.current?.model || state.models.default
+  const rows = []
+  if (state.models.failures?.length) {
+    rows.push(el('div', { class: 'small', text: '部分模型不可用：' + state.models.failures.map((f) => f.name || f.id).join('、') }))
+  }
+  for (const group of state.models.groups) {
+    rows.push(el('h2', { text: group.name }))
+    for (const model of group.models) {
+      const selected = selection && selection.model === model.id
+      rows.push(
+        el('button', {
+          class: `option${selected ? ' sel' : ''}`,
+          onclick: async () => {
+            try {
+              await api(`/api/sessions/${encodeURIComponent(state.current.id)}/model`, {
+                method: 'POST',
+                body: { provider: group.id, model: model.id },
+              })
+              state.current.model = { provider: group.id, model: model.id }
+              close()
+              refreshSessionMeta()
+              toast('已切换到 ' + model.name)
+            } catch (error) {
+              toast('切换失败：' + error.message)
+            }
+          },
+        }, [
+          el('div', { class: 'name' }, [
+            el('div', { text: model.name }),
+            model.description ? el('div', { class: 'desc', text: model.description }) : null,
+          ]),
+          selected ? el('div', { class: 'check', text: '✓' }) : null,
+        ]),
+      )
+    }
+  }
+  if (!rows.length) rows.push(el('div', { class: 'small', text: '没有可用模型' }))
+  return [el('h2', { text: '选择模型' }), ...rows]
+}
+
+function presetSheet(close) {
+  const current = state.current?.agentPreset || state.current?.projections?.agentPreset
+  const rows = state.presets.map((preset) =>
+    el('button', {
+      class: `option${preset.id === current ? ' sel' : ''}`,
+      onclick: async () => {
+        try {
+          await api(`/api/sessions/${encodeURIComponent(state.current.id)}/preset`, {
+            method: 'POST',
+            body: { preset: preset.id },
+          })
+          state.current.agentPreset = preset.id
+          close()
+          refreshSessionMeta()
+          toast('已切换到 ' + preset.name)
+        } catch (error) {
+          toast('切换失败：' + error.message)
+        }
+      },
+    }, [
+      el('div', { class: 'name' }, [
+        el('div', { text: preset.name || preset.id }),
+        preset.description ? el('div', { class: 'desc', text: preset.description }) : null,
+      ]),
+      preset.id === current ? el('div', { class: 'check', text: '✓' }) : null,
+    ]),
+  )
+  if (!rows.length) rows.push(el('div', { class: 'small', text: '没有可切换的预设' }))
+  return [el('h2', { text: '模式 / 预设' }), ...rows]
+}
+
+function approvalSheet(close) {
+  const armed = state.approvals.armedUntil > Date.now()
+  return [
+    el('h2', { text: '远程审批' }),
+    el('div', { class: 'small', text: '开启后，电脑上需要你批准的工具调用会推送到手机，可以直接允许或拒绝；到期自动交还电脑。' }),
+    el('button', {
+      class: 'option',
+      onclick: async () => {
+        try {
+          const result = await api('/api/approvals/arm', { method: 'POST', body: { minutes: 30 } })
+          state.approvals.armedUntil = result.armedUntil || Date.now() + 30 * 60_000
+          close()
+          refreshSessionMeta()
+          toast('已接管审批 30 分钟')
+        } catch (error) {
+          toast('设置失败：' + error.message)
+        }
+      },
+    }, [el('div', { class: 'name', text: armed ? '延长接管 30 分钟' : '接管审批 30 分钟' })]),
+    armed
+      ? el('button', {
+        class: 'option',
+        onclick: async () => {
+          try {
+            await api('/api/approvals/arm', { method: 'POST', body: { minutes: 0 } })
+            state.approvals.armedUntil = 0
+            close()
+            refreshSessionMeta()
+            toast('已交还电脑审批')
+          } catch (error) {
+            toast('失败：' + error.message)
+          }
+        },
+      }, [el('div', { class: 'name', text: '交还电脑审批' })])
+      : null,
+  ]
+}
+
+/* ------------------------------------------------------------------ panels */
+
+let lastOpen = { key: '', at: 0 }
+
+/** Ignore a second opening of the same panel within half a second (double tap). */
+function guardOpen(key) {
+  const now = Date.now()
+  if (lastOpen.key === key && now - lastOpen.at < 500) return false
+  lastOpen = { key, at: now }
+  return true
+}
+
+function panelShell({ title, subtitle, right = [] }) {
+  const titleEl = el('b', { text: title })
+  const subtitleEl = el('span', { text: subtitle || '' })
+  const body = el('div', { class: 'panel-body' })
+  const close = () => panel.remove()
+  const panel = el('div', { class: 'panel' }, [
+    el('div', { class: 'panel-head' }, [
+      el('button', { class: 'icon-btn', onclick: close }, [svg(ICON.back)]),
+      el('div', { class: 'panel-title' }, [titleEl, subtitleEl]),
+      ...right,
+    ]),
+    body,
+  ])
+  document.body.append(panel)
+  return {
+    panel,
+    body,
+    close,
+    setTitle(value, sub) {
+      titleEl.textContent = value
+      if (sub !== undefined) subtitleEl.textContent = sub
+    },
+    setRight(nodes) {
+      const head = panel.querySelector('.panel-head')
+      while (head.children.length > 2) head.lastChild.remove()
+      for (const node of nodes) head.append(node)
+    },
+  }
+}
+
+/* ------------------------------------------------------------------ files */
+
+function openFilesPanel(startPath = '') {
+  if (!guardOpen('files')) return null
+  const view = panelShell({ title: '工作区文件', subtitle: '读取中…' })
+  const sessionId = state.current?.id || ''
+
+  async function load(pathValue) {
+    view.setTitle('工作区文件', pathValue || '（会话工作目录）')
+    view.body.replaceChildren(el('div', { class: 'empty', text: '读取中…' }))
+    try {
+      const data = await api(`/api/files?session=${encodeURIComponent(sessionId)}&path=${encodeURIComponent(pathValue || '')}`)
+      const rows = []
+      if (data.parent !== null && data.parent !== undefined) {
+        rows.push(
+          el('button', { class: 'file-row', onclick: () => load(data.parent) }, [
+            el('div', { class: 'ftype', text: '↑' }),
+            el('div', { class: 'fname', text: '..' }),
+          ]),
+        )
+      }
+      for (const entry of data.entries || []) {
+        const isDir = entry.kind === 'dir' || entry.kind === 'directory'
+        rows.push(
+          el('button', {
+            class: 'file-row',
+            onclick: () => (isDir ? load(entry.path) : previewFile(entry.path, entry.name)),
+          }, [
+            el('div', { class: 'ftype' }, [svg(isDir ? ICON.folder : ICON.file, 15)]),
+            el('div', { class: 'fname', text: entry.name }),
+            el('div', { class: 'fmeta', text: isDir ? '' : sizeLabel(entry.size) }),
+          ]),
+        )
+      }
+      if (!rows.length) rows.push(el('div', { class: 'empty', text: '这个目录是空的' }))
+      view.body.replaceChildren(...rows)
+      view.setTitle('工作区文件', data.path || pathValue || '')
+    } catch (error) {
+      view.body.replaceChildren(el('div', { class: 'empty', text: '读取失败：' + error.message }))
+    }
+  }
+
+  function previewFile(pathValue, name) {
+    const viewer = panelShell({ title: name || pathValue, subtitle: '读取中…' })
+    api(`/api/files/read?session=${encodeURIComponent(sessionId)}&path=${encodeURIComponent(pathValue)}`)
+      .then((data) => {
+        viewer.setTitle(name || pathValue, data.truncated ? '已截断显示' : `${(data.text || '').length} 字符`)
+        viewer.body.replaceChildren(el('div', { class: 'code-view', text: data.text || '' }))
+      })
+      .catch((error) => {
+        viewer.body.replaceChildren(el('div', { class: 'empty', text: '读取失败：' + error.message }))
+      })
+  }
+
+  load(startPath)
+  return view
+}
+
+function sizeLabel(size) {
+  if (!size && size !== 0) return ''
+  if (size < 1024) return `${size} B`
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`
+  return `${(size / 1024 / 1024).toFixed(1)} MB`
+}
+
+/* ------------------------------------------------------------------ terminal */
+
+function openTerminalPanel() {
+  if (!guardOpen('terminal')) return null
+  const sessionId = state.current?.id || ''
+  const cwd = state.current?.cwd || ''
+  const view = panelShell({ title: '终端', subtitle: cwd || '逐条执行命令' })
+  let running = null // { id, cursor, timer }
+  let busy = false
+
+  const output = el('div', { class: 'term' })
+  const input = el('input', {
+    placeholder: '输入命令，回车执行',
+    autocomplete: 'off',
+    spellcheck: 'false',
+    onkeydown: (event) => {
+      if (event.key === 'Enter' && !event.isComposing) {
+        event.preventDefault()
+        const command = input.value
+        input.value = ''
+        execute(command)
+      }
+    },
+  })
+
+  const quick = [
+    ['ls', 'ls'],
+    ['git status', 'git status'],
+    ['pwd', 'pwd'],
+    ['清屏', null],
+  ]
+
+  const wrap = el('div', { class: 'term-wrap' }, [
+    output,
+    el('div', { class: 'term-kbd' }, quick.map(([label, command]) =>
+      el('button', {
+        class: 'chip',
+        onclick: () => {
+          if (command === null) output.textContent = ''
+          else execute(command)
+        },
+      }, [label]),
+    )),
+    el('div', { class: 'term-input' }, [
+      input,
+      el('button', { class: 'send', onclick: () => { const command = input.value; input.value = ''; execute(command) } }, [svg(ICON.send, 17)]),
+    ]),
+  ])
+  view.body.style.display = 'flex'
+  view.body.style.flexDirection = 'column'
+  view.body.replaceChildren(wrap)
+  view.setRight([
+    el('button', { class: 'icon-btn', title: '结束当前命令', onclick: stopRun }, [svg(ICON.stop, 16)]),
+  ])
+
+  function write(text) {
+    if (!text) return
+    output.textContent += text
+    output.scrollTop = output.scrollHeight
+  }
+
+  function stopRun() {
+    if (!running) return toast('当前没有在运行的命令')
+    api(`/api/runs/${encodeURIComponent(running.id)}/kill`, { method: 'POST', body: {} })
+      .then(() => toast('已请求结束'))
+      .catch((error) => toast('结束失败：' + error.message))
+  }
+
+  async function execute(command) {
+    const text = String(command || '').trim()
+    if (!text) return
+    if (busy) return toast('上一条命令还在运行')
+    busy = true
+    try {
+      const created = await api('/api/runs', { method: 'POST', body: { session: sessionId, command: text } })
+      running = { id: created.id, cursor: 0, timer: null }
+      view.setTitle('终端', '运行中…')
+      running.timer = setInterval(poll, 600)
+      await poll()
+    } catch (error) {
+      busy = false
+      toast('执行失败：' + error.message)
+    }
+  }
+
+  async function poll() {
+    if (!running) return
+    if (!view.panel.isConnected) {
+      clearInterval(running.timer)
+      running = null
+      busy = false
+      return
+    }
+    try {
+      const data = await api(`/api/runs/${encodeURIComponent(running.id)}?cursor=${running.cursor}`)
+      write(data.text || '')
+      running.cursor = data.cursor ?? running.cursor
+      if (!data.running) {
+        clearInterval(running.timer)
+        running = null
+        busy = false
+        view.setTitle('终端', `已完成${data.exitCode != null ? ' · 退出码 ' + data.exitCode : ''}${data.signal ? ' · ' + data.signal : ''}`)
+      }
+    } catch (error) {
+      clearInterval(running.timer)
+      running = null
+      busy = false
+      view.setTitle('终端', '读取失败')
+      toast(error.message)
+    }
+  }
+
+  write(
+    `逐条执行命令（不是交互式 PTY），工作目录：${cwd || '会话目录'}\n` +
+      `适合跑 ls / git / npm 这类命令；需要 TUI 的程序请在电脑上操作。\n\n`,
+  )
+  return view
+}
+
+/* ------------------------------------------------------------------ goal */
+
+function openGoalPanel() {
+  if (!guardOpen('goal')) return null
+  const sessionId = state.current?.id || ''
+  const view = panelShell({ title: '目标', subtitle: '读取中…' })
+
+  const phaseLabel = {
+    active: '进行中',
+    paused: '已暂停',
+    completed: '已完成',
+    blocked: '受阻',
+    cleared: '已清除',
+  }
+
+  async function load() {
+    view.body.replaceChildren(el('div', { class: 'empty', text: '读取中…' }))
+    try {
+      const data = await api(`/api/goal?session=${encodeURIComponent(sessionId)}`)
+      const goal = data.goal
+      if (!goal) {
+        view.setTitle('目标', '无')
+        view.body.replaceChildren(
+          el('div', { class: 'empty', text: data.live ? '这个会话还没有目标。\n目标由电脑端的 create_goal 建立。' : '会话没在电脑上运行，读不到目标。' }),
+        )
+        return
+      }
+      view.setTitle('目标', phaseLabel[goal.phase] || goal.phase)
+      const action = (label, name, ghost = false) =>
+        el('button', {
+          class: 'chip' + (ghost ? '' : ' on'),
+          onclick: async () => {
+            try {
+              await api(`/api/goal/${name}`, { method: 'POST', body: { session: sessionId } })
+              toast('已' + label)
+              load()
+            } catch (error) {
+              toast('操作失败：' + error.message)
+            }
+          },
+        }, [label])
+
+      const actions = []
+      if (goal.phase === 'active') {
+        actions.push(action('暂停', 'pause'))
+        actions.push(action('标记完成', 'complete'))
+      }
+      if (goal.phase === 'paused' || goal.phase === 'blocked') actions.push(action('继续', 'resume'))
+      actions.push(action('清除', 'clear', true))
+
+      view.body.replaceChildren(
+        el('div', { class: 'tool', style: 'margin:0 0 12px' }, [
+          el('div', { class: 'tool-head' }, [
+            el('span', { class: 'tool-name', text: phaseLabel[goal.phase] || goal.phase }),
+            el('span', { class: 'tool-status', text: `${goal.roundsStarted ?? 0} / ${goal.maxGoalRounds || '∞'} 轮` }),
+          ]),
+          el('div', { class: 'tool-body', style: 'max-height:none;color:#dbe6fb' }, [goal.objective]),
+          goal.blockedReason?.message
+            ? el('div', { class: 'tool-body', style: 'color:#ffb4b4' }, ['受阻：' + goal.blockedReason.message])
+            : null,
+        ]),
+        el('div', { style: 'display:flex;gap:8px;flex-wrap:wrap' }, actions),
+        el('div', { class: 'small', style: 'margin-top:12px', text: '目标会在电脑上自动续跑；暂停或清除后不再自动继续。' }),
+      )
+    } catch (error) {
+      view.body.replaceChildren(el('div', { class: 'empty', text: '读取失败：' + error.message }))
+    }
+  }
+
+  load()
+  return view
+}
+
+/* ------------------------------------------------------------------ schedules */
+
+function openSchedulesPanel() {
+  if (!guardOpen('schedules')) return null
+  const view = panelShell({ title: '计划任务', subtitle: '读取中…' })
+  view.setRight([
+    el('button', { class: 'icon-btn', title: '新建提醒', onclick: () => openScheduleForm(load) }, [svg(ICON.plus, 16)]),
+  ])
+
+  async function load() {
+    view.body.replaceChildren(el('div', { class: 'empty', text: '读取中…' }))
+    try {
+      const data = await api('/api/schedules')
+      const items = data.items || []
+      view.setTitle('计划任务', `${items.length} 条`)
+      if (!items.length) {
+        view.body.replaceChildren(el('div', { class: 'empty', text: '电脑上还没有计划任务。\n可以在电脑端用 schedule_create 建一个。' }))
+        return
+      }
+      view.body.replaceChildren(
+        ...items.map((item) =>
+          el('div', { class: 'tool', style: 'margin:0 0 8px' }, [
+            el('div', { class: 'tool-head' }, [
+              el('span', { class: 'tool-name', text: item.title }),
+              el('span', { class: 'tool-status' + (item.status === 'active' ? ' ok' : ''), text: item.status === 'active' ? '生效中' : '已停用' }),
+            ]),
+            el('div', { class: 'small', style: 'margin-top:6px' }, [
+              item.cadence || '一次性',
+              item.scheduledAt ? ` · 下次 ${formatWhen(item.scheduledAt)}` : '',
+            ]),
+            item.prompt ? el('div', { class: 'tool-body', text: item.prompt }) : null,
+            el('div', { style: 'display:flex;gap:8px;margin-top:8px' }, [
+              el('button', {
+                class: 'chip',
+                style: 'border-color:#5b1b22;color:#ffb4b4',
+                onclick: async () => {
+                  try {
+                    await api('/api/schedules/delete', { method: 'POST', body: { session: item.sessionId, id: item.id } })
+                    toast('已删除')
+                    load()
+                  } catch (error) {
+                    toast('删除失败：' + error.message)
+                  }
+                },
+              }, '删除'),
+            ]),
+          ]),
+        ),
+      )
+    } catch (error) {
+      view.body.replaceChildren(el('div', { class: 'empty', text: '读取失败：' + error.message }))
+    }
+  }
+
+  load()
+  return view
+}
+
+function formatWhen(value) {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return String(value)
+  return date.toLocaleString()
+}
+
+/** Minimal reminder form: title, content, minutes from now. */
+function openScheduleForm(reload) {
+  const target = state.current || state.sessions[0]
+  const title = el('input', { placeholder: '标题，例如：起来喝水' })
+  const prompt = el('input', { placeholder: '提醒内容（留空就用标题）' })
+  const minutes = el('input', { type: 'number', min: '1', value: '30' })
+  const error = el('div', { class: 'err' })
+
+  openSheet((close) => [
+    el('h2', { text: '新建提醒' }),
+    el('div', { class: 'small', text: target ? `会在「${target.title || '未命名会话'}」里提醒你` : '还没有会话，先建一个' }),
+    el('div', { class: 'field' }, [el('label', { text: '标题' }), title]),
+    el('div', { class: 'field' }, [el('label', { text: '内容' }), prompt]),
+    el('div', { class: 'field' }, [el('label', { text: '多少分钟后' }), minutes]),
+    error,
+    el('button', {
+      class: 'btn',
+      onclick: async () => {
+        if (!target) return (error.textContent = '没有可用的会话')
+        try {
+          await api('/api/schedules', {
+            method: 'POST',
+            body: {
+              session: target.id,
+              title: title.value.trim(),
+              prompt: prompt.value.trim() || title.value.trim(),
+              afterMinutes: Number(minutes.value) || 30,
+            },
+          })
+          close()
+          toast('提醒已创建')
+          reload()
+        } catch (cause) {
+          error.textContent = '创建失败：' + cause.message
+        }
+      },
+    }, '创建'),
+  ])
+}
+
+/* ------------------------------------------------------------------ settings */
+
+function openSettingsPanel() {
+  if (!guardOpen('settings')) return null
+  const view = panelShell({ title: 'DSH 设置', subtitle: '读取中…' })
+  let namespaces = []
+
+  async function load() {
+    view.body.replaceChildren(el('div', { class: 'empty', text: '读取中…' }))
+    try {
+      const data = await api('/api/settings')
+      namespaces = data.namespaces || []
+      if (!namespaces.length) {
+        view.body.replaceChildren(el('div', { class: 'empty', text: '这个 DSH 没有可写的设置项' }))
+        return
+      }
+      view.setTitle('DSH 设置', `${namespaces.length} 组`)
+      view.body.replaceChildren(
+        ...namespaces.map((ns) =>
+          el('button', { class: 'file-row', onclick: () => openNamespace(ns) }, [
+            el('div', { class: 'ftype' }, [svg(ICON.sliders, 15)]),
+            el('div', { class: 'fname', text: ns.title || ns.ns }),
+            el('div', { class: 'fmeta', text: `${(ns.fields || []).length} 项` }),
+          ]),
+        ),
+      )
+    } catch (error) {
+      view.body.replaceChildren(el('div', { class: 'empty', text: '读取失败：' + error.message }))
+    }
+  }
+
+  function openNamespace(ns) {
+    const detail = panelShell({ title: ns.title || ns.ns, subtitle: ns.ns })
+    const draft = {}
+    const rows = (ns.fields || []).map((field) => {
+      const current = Object.prototype.hasOwnProperty.call(draft, field.key) ? draft[field.key] : field.value
+      if (field.type === 'boolean') {
+        const control = el('div', { class: `switch${current ? ' on' : ''}` })
+        control.addEventListener('click', () => {
+          const next = !control.classList.contains('on')
+          control.classList.toggle('on', next)
+          draft[field.key] = next
+        })
+        return el('div', { class: 'setting-row' }, [
+          el('div', { class: 'sname' }, [el('b', { text: field.label || field.key }), field.description ? el('span', { text: field.description }) : null]),
+          control,
+        ])
+      }
+      if (field.type === 'select') {
+        const select = el('select', {
+          onchange: (event) => {
+            draft[field.key] = event.target.value
+          },
+        }, (field.options || []).map((option) =>
+          el('option', { value: option.value, selected: option.value === current ? 'selected' : null }, option.label || option.value),
+        ))
+        return el('div', { class: 'setting-row' }, [
+          el('div', { class: 'sname' }, [el('b', { text: field.label || field.key }), field.description ? el('span', { text: field.description }) : null]),
+          select,
+        ])
+      }
+      if (field.type === 'number') {
+        const fieldInput = el('input', { type: 'number', value: current ?? '', oninput: (event) => { draft[field.key] = Number(event.target.value) } })
+        return el('div', { class: 'setting-row' }, [
+          el('div', { class: 'sname' }, [el('b', { text: field.label || field.key }), field.description ? el('span', { text: field.description }) : null]),
+          fieldInput,
+        ])
+      }
+      if (field.type === 'string') {
+        const fieldInput = el('input', { type: 'text', value: current ?? '', oninput: (event) => { draft[field.key] = event.target.value } })
+        return el('div', { class: 'setting-row' }, [
+          el('div', { class: 'sname' }, [el('b', { text: field.label || field.key }), field.description ? el('span', { text: field.description }) : null]),
+          fieldInput,
+        ])
+      }
+      return el('div', { class: 'setting-row' }, [
+        el('div', { class: 'sname' }, [el('b', { text: field.label || field.key }), el('span', { text: '只读：' + JSON.stringify(current).slice(0, 60) })]),
+      ])
+    })
+
+    const save = el('button', {
+      class: 'btn',
+      onclick: async () => {
+        if (!Object.keys(draft).length) return toast('没有改动')
+        try {
+          await api(`/api/settings/${encodeURIComponent(ns.ns)}`, {
+            method: 'POST',
+            body: { patch: draft, revision: ns.revision },
+          })
+          toast('已保存')
+          detail.close()
+          load()
+        } catch (error) {
+          toast('保存失败：' + error.message)
+        }
+      },
+    }, '保存')
+
+    detail.body.replaceChildren(...rows, rows.length ? el('div', { style: 'height:12px' }) : el('div', { class: 'empty', text: '这个设置组没有可编辑字段' }), save)
+  }
+
+  load()
+  return view
+}
+
+/* ------------------------------------------------------------------ go */
+
+boot()
+setInterval(() => {
+  if (state.view === 'sessions' && !document.hidden) {
+    // keep the list fresh without a full reload
+    api('/api/bootstrap')
+      .then((bootstrap) => {
+        state.sessions = bootstrap.sessions?.items || state.sessions
+        state.approvals = bootstrap.approvals || state.approvals
+        if (state.view === 'sessions') renderSessions()
+      })
+      .catch(() => {})
+  }
+}, 15000)

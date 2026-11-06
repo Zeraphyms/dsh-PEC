@@ -1,0 +1,6 @@
+- insert:
+    - id: cc-dsh
+      name: cc-dsh
+      config:
+        port: 7317
+        autoPair: true

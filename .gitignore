@@ -1,0 +1,20 @@
+# dependencies / build output
+node_modules/
+android-shell/build/
+android-shell/app/src/main/res/**/build/
+build-keys/
+dist/
+*.apk
+*.keystore
+*.jks
+
+# local state (device tokens, pairing codes)
+state.json
+state.json.bak
+
+# editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.log
