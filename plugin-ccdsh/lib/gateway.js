@@ -222,6 +222,57 @@ export class Gateway {
     )
   }
 
+  /** Raw terminal bytes as SSE; each event carries its absolute byte offset. */
+  #termStream(req, res, sessionId, url) {
+    res.writeHead(200, {
+      'content-type': 'text/event-stream; charset=utf-8',
+      connection: 'keep-alive',
+      'cache-control': 'no-cache, no-transform',
+      'x-accel-buffering': 'no',
+    })
+    res.write(': terminal\n\n')
+
+    const send = (event, data) => {
+      if (!res.writableEnded) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
+    }
+
+    let subscription
+    try {
+      subscription = this.dsh.termSubscribe(sessionId, Number(url.searchParams.get('from')) || 0, (offset, data) => {
+        send('data', { offset, data: Buffer.from(data).toString('base64') })
+      })
+    } catch (error) {
+      send('error', { message: String(error?.message || error) })
+      res.end()
+      return
+    }
+    send('ready', { mode: subscription.mode, shell: subscription.shell, cursor: subscription.cursor })
+
+    const keepalive = setInterval(() => {
+      if (!res.writableEnded) res.write(': keepalive\n\n')
+    }, 20_000)
+    const watcher = setInterval(() => {
+      const status = this.dsh.ptyStatus(sessionId)
+      if (!status.running) {
+        send('exit', { exitCode: null })
+        cleanup()
+      }
+    }, 1000)
+
+    const cleanup = () => {
+      clearInterval(keepalive)
+      clearInterval(watcher)
+      try {
+        subscription.dispose()
+      } catch {
+        /* ignore */
+      }
+      if (!res.writableEnded) res.end()
+    }
+
+    req.on('close', cleanup)
+  }
+
   async #handle(req, res) {
     const url = new URL(req.url || '/', 'http://localhost')
     const pathname = decodeURIComponent(url.pathname)
@@ -245,6 +296,7 @@ export class Gateway {
     if (pathname === '/style.css') return this.#static(res, 'style.css')
     if (pathname === '/icon.svg') return this.#static(res, 'icon.svg')
     if (pathname === '/manifest.webmanifest') return this.#static(res, 'manifest.webmanifest')
+    if (pathname.startsWith('/vendor/')) return this.#static(res, pathname.slice(1))
     if (pathname === '/api/ping') return sendJson(res, 200, { ok: true, server: { id: this.state.serverId, name: this.state.name } })
 
     if (pathname === '/api/pair' && req.method === 'POST') {
@@ -376,6 +428,22 @@ export class Gateway {
         return sendJson(res, 200, await this.dsh.killRun(id))
       }
       return sendJson(res, 200, this.dsh.readRun(id, url.searchParams.get('cursor') || 0))
+    }
+
+    // ---- raw terminal transport (xterm.js on the phone) ------------------
+    if (pathname === '/api/term/open' && req.method === 'POST') {
+      const body = await readJson(req)
+      return sendJson(res, 200, await this.dsh.ptyOpen(body.session, body))
+    }
+    const termMatch = pathname.match(/^\/api\/term\/([^/]+)\/(stream|input|resize|close)$/)
+    if (termMatch) {
+      const sessionId = decodeURIComponent(termMatch[1])
+      const action = termMatch[2]
+      if (action === 'stream') return this.#termStream(req, res, sessionId, url)
+      const body = await readJson(req)
+      if (action === 'input') return sendJson(res, 200, await this.dsh.termWrite(sessionId, body.data))
+      if (action === 'resize') return sendJson(res, 200, await this.dsh.ptyResize(sessionId, body.cols, body.rows))
+      if (action === 'close') return sendJson(res, 200, await this.dsh.ptyKill(sessionId))
     }
 
     // ---- real PTY -------------------------------------------------------

@@ -565,6 +565,20 @@ a { color: var(--accent); }
 }
 .switch.on::after { transform: translateX(18px); }
 
+/* ---------------------------------------------------------------- xterm */
+.xterm-host {
+  flex: 1;
+  min-height: 0;
+  background: #080b10;
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  padding: 6px;
+  overflow: hidden;
+}
+.xterm-host .xterm { height: 100%; }
+.xterm-host .xterm-viewport { background: transparent !important; }
+.xterm-host .xterm-screen { width: 100%; }
+
 /* ---------------------------------------------------------------- legacy */
 .composer-bar { display: flex; align-items: flex-end; gap: 10px; }
 .composer {

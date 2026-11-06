@@ -1387,131 +1387,163 @@ function sizeLabel(size) {
 
 function openTerminalPanel() {
   if (!guardOpen('terminal')) return null
+  if (!window.Terminal) {
+    toast('终端组件没加载出来，刷新页面试试')
+    return null
+  }
   const sessionId = state.current?.id || ''
   const cwd = state.current?.cwd || ''
   const view = panelShell({ title: '终端', subtitle: '正在打开…' })
-  let cursor = 0
-  let timer = null
-  let closed = false
-  let shellName = ''
-
-  const output = el('div', { class: 'term' })
-  const input = el('input', {
-    placeholder: '输入命令，回车执行（支持交互式程序）',
-    autocomplete: 'off',
-    spellcheck: 'false',
-    onkeydown: (event) => {
-      if (event.key === 'Enter' && !event.isComposing) {
-        event.preventDefault()
-        const text = input.value
-        input.value = ''
-        send(text + '\r')
-      }
-    },
-  })
-
-  const quick = [
-    ['Ctrl-C', '\u0003'],
-    ['Tab', '\t'],
-    ['↑', '\u001b[A'],
-    ['↓', '\u001b[B'],
-    ['ls', 'ls\r'],
-    ['clear', 'clear\r'],
-    ['清屏', null],
-  ]
-
-  const wrap = el('div', { class: 'term-wrap' }, [
-    output,
-    el('div', { class: 'term-kbd' }, quick.map(([label, text]) =>
-      el('button', {
-        class: 'chip',
-        onclick: () => {
-          if (text === null) output.textContent = ''
-          else send(text)
-        },
-      }, [label]),
-    )),
-    el('div', { class: 'term-input' }, [
-      input,
-      el('button', { class: 'send', onclick: () => { const text = input.value; input.value = ''; send(text + '\r') } }, [svg(ICON.send, 17)]),
-    ]),
-  ])
+  const host = el('div', { class: 'xterm-host' })
+  view.body.style.padding = '6px'
+  view.body.style.overflow = 'hidden'
   view.body.style.display = 'flex'
   view.body.style.flexDirection = 'column'
-  view.body.replaceChildren(wrap)
+  view.body.replaceChildren(host)
+
+  const term = new window.Terminal({
+    fontSize: 12,
+    fontFamily: 'ui-monospace, "Cascadia Code", Consolas, monospace',
+    cursorBlink: true,
+    scrollback: 3000,
+    convertEol: false,
+    theme: {
+      background: '#080b10',
+      foreground: '#c8d6f0',
+      cursor: '#4f8cff',
+      selectionBackground: '#26406b',
+      black: '#1b2230',
+      brightBlack: '#5b6b85',
+    },
+  })
+  const FitAddonCtor = window.FitAddon?.FitAddon || window.FitAddon
+  const fit = typeof FitAddonCtor === 'function' ? new FitAddonCtor() : null
+  if (fit) term.loadAddon(fit)
+  term.open(host)
+
+  let source = null
+  let closed = false
+  let shellName = ''
+  let lastOffset = 0
+
+  const encoder = new TextEncoder()
+  const toBase64 = (bytes) => {
+    let binary = ''
+    for (let index = 0; index < bytes.length; index += 1) binary += String.fromCharCode(bytes[index])
+    return btoa(binary)
+  }
+  const fromBase64 = (text) => {
+    const binary = atob(text)
+    const bytes = new Uint8Array(binary.length)
+    for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index)
+    return bytes
+  }
+
+  const fitNow = () => {
+    if (!fit) return
+    try {
+      fit.fit()
+    } catch {
+      /* ignore */
+    }
+    api(`/api/term/${encodeURIComponent(sessionId)}/resize`, {
+      method: 'POST',
+      body: { cols: term.cols, rows: term.rows },
+    }).catch(() => {})
+  }
+
+  const cleanup = (closeRemote) => {
+    if (closed) return
+    closed = true
+    if (source) {
+      source.close()
+      source = null
+    }
+    if (closeRemote) {
+      api(`/api/term/${encodeURIComponent(sessionId)}/close`, { method: 'POST', body: {} }).catch(() => {})
+    }
+  }
+
   view.setRight([
-    el('button', { class: 'icon-btn', title: '关闭终端', onclick: kill }, [svg(ICON.stop, 16)]),
+    el('button', { class: 'icon-btn', title: '关闭终端', onclick: () => { cleanup(true); view.close() } }, [svg(ICON.stop, 16)]),
   ])
 
-  function write(text) {
-    if (!text) return
-    output.textContent += text
-    output.scrollTop = output.scrollHeight
-  }
-
-  async function send(text) {
-    if (!text) return
-    try {
-      await api(`/api/pty/${encodeURIComponent(sessionId)}/input`, { method: 'POST', body: { text } })
-    } catch (error) {
-      write(`\n[发送失败] ${error.message}\n`)
-    }
-  }
-
-  async function poll() {
+  term.onData((data) => {
     if (closed) return
-    try {
-      const data = await api(`/api/pty/${encodeURIComponent(sessionId)}?cursor=${cursor}`)
-      write(data.text || '')
-      cursor = data.cursor ?? cursor
-      view.setTitle(
-        data.mode === 'pty' ? '交互终端' : '持久 shell（兼容模式）',
-        data.running ? `${shellName} · 运行中` : '已退出',
-      )
-      if (!data.running) stopPolling()
-    } catch (error) {
-      view.setTitle('终端', '读取失败')
-      stopPolling()
-    }
-  }
+    api(`/api/term/${encodeURIComponent(sessionId)}/input`, {
+      method: 'POST',
+      body: { data: toBase64(encoder.encode(data)) },
+    }).catch(() => {})
+  })
 
-  function stopPolling() {
-    if (timer) clearInterval(timer)
-    timer = null
-  }
-
-  async function kill() {
-    try {
-      await api(`/api/pty/${encodeURIComponent(sessionId)}/kill`, { method: 'POST', body: {} })
-      toast('终端已关闭')
-    } catch (error) {
-      toast('关闭失败：' + error.message)
+  const watcher = setInterval(() => {
+    if (!view.panel.isConnected) {
+      clearInterval(watcher)
+      cleanup(true)
     }
-    closed = true
-    stopPolling()
-    view.close()
-  }
+  }, 800)
 
   async function start() {
     try {
-      const opened = await api('/api/pty', { method: 'POST', body: { session: sessionId } })
-      shellName = opened.shell ? opened.shell.split(/[\\/]/).pop() : ''
+      view.setTitle('终端', '打开中…')
+      const opened = await api('/api/term/open', {
+        method: 'POST',
+        body: { session: sessionId, cols: term.cols || 100, rows: term.rows || 30 },
+      })
+      shellName = opened.shell ? opened.shell.split(/[\\/]/).pop() : 'shell'
       const modeLabel = opened.mode === 'pty' ? '交互终端' : '持久 shell（兼容模式）'
-      view.setTitle(modeLabel, `${shellName} · 运行中`)
-      timer = setInterval(poll, 600)
-      await poll()
-      input.focus()
+      view.setTitle(modeLabel, `${shellName} · 连接中…`)
+      fitNow()
+
+      const token = state.token ? `&token=${encodeURIComponent(state.token)}` : ''
+      source = new EventSource(`/api/term/${encodeURIComponent(sessionId)}/stream?from=0${token}`)
+      source.addEventListener('ready', (event) => {
+        try {
+          const info = JSON.parse(event.data)
+          view.setTitle(modeLabel, `${String(info.shell || shellName).split(/[\\/]/).pop()} · 运行中`)
+        } catch {
+          view.setTitle(modeLabel, '运行中')
+        }
+      })
+      source.addEventListener('data', (event) => {
+        try {
+          const chunk = JSON.parse(event.data)
+          const bytes = fromBase64(chunk.data)
+          lastOffset = Math.max(lastOffset, chunk.offset + bytes.length)
+          term.write(bytes)
+        } catch {
+          /* ignore a malformed frame */
+        }
+      })
+      source.addEventListener('exit', () => {
+        term.write('\r\n\x1b[2m[进程已退出]\x1b[0m\r\n')
+        cleanup(false)
+        view.setTitle('终端', '已退出')
+      })
+      source.addEventListener('error', () => {
+        if (closed) return
+        view.setTitle('终端', '连接中断，重试中…')
+      })
+      inputFocus()
     } catch (error) {
-      view.close()
-      toast('真终端不可用，改用命令模式：' + error.message)
-      openCommandPanel()
+      term.write(`\r\n\x1b[31m[打开失败] ${error.message}\x1b[0m\r\n`)
+      view.setTitle('终端', '打开失败')
+      cleanup(false)
     }
   }
 
+  function inputFocus() {
+    try {
+      term.focus()
+    } catch {
+      /* ignore */
+    }
+  }
+
+  window.addEventListener('resize', fitNow)
   start()
   return view
 }
-
 /** Fallback: one command per request (used when no PTY backend exists). */
 function openCommandPanel() {
   if (!guardOpen('command')) return null

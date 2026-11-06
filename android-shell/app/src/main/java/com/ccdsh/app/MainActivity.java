@@ -345,6 +345,14 @@ public class MainActivity extends Activity {
         web.addJavascriptInterface(new Bridge(), "CCDSH");
         web.setWebChromeClient(new WebChromeClient() {
             @Override
+            public boolean onConsoleMessage(android.webkit.ConsoleMessage message) {
+                // Keep page errors reachable from `adb logcat` when the phone only
+                // shows a toast.
+                android.util.Log.i("ccdsh-web", message.message() + " @" + message.lineNumber());
+                return true;
+            }
+
+            @Override
             public void onProgressChanged(WebView view, int newProgress) {
                 if (progress == null) return;
                 progress.setVisibility(newProgress >= 100 ? View.GONE : View.VISIBLE);

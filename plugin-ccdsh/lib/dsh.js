@@ -545,7 +545,9 @@ export class Dsh {
   /** Open (or reuse) one real PTY for a session through ConPTY / pty. */
   async ptyOpen(sessionId, options = {}) {
     const existing = this.ptys.get(sessionId)
-    if (existing) return { id: sessionId, shell: existing.shell, pid: existing.pid ?? null, reused: true }
+    if (existing) {
+      return { id: sessionId, shell: existing.shell, mode: existing.mode, pid: existing.pid ?? null, reused: true }
+    }
 
     const subprocess = this.#svc('subprocess')
     if (!subprocess?.spawnTerminal) throw new Error('这台电脑没有启用终端（subprocess.spawnTerminal 不可用）')
@@ -588,6 +590,9 @@ export class Dsh {
       entry.rawChunks = (entry.rawChunks || 0) + 1
       entry.rawBytes = (entry.rawBytes || 0) + chunk.length
       if (!entry.preview) entry.preview = JSON.stringify(chunk.toString('utf8').slice(0, 80))
+      // Raw bytes for the phone's terminal emulator: it renders the escape
+      // sequences itself and answers device queries, like a real terminal.
+      this.#pushChunk(entry, chunk)
       entry.buffer += normalizeTerminalText(chunk.toString('utf8'))
       if (entry.buffer.length > 400_000) {
         const dropped = entry.buffer.length - 300_000
@@ -613,10 +618,11 @@ export class Dsh {
     )
     this.ptys.set(sessionId, entry)
     this.log.info(`pty opened for ${sessionId}: ${shell}`)
-    // Wait out the probe window before answering, so the first keystrokes can
-    // never race the fallback switch.
-    const mode = await this.#probePty(sessionId)
-    return { id: sessionId, shell, mode, pid: entry.pid ?? null }
+    // No automatic downgrade here: a terminal emulator answers the shell's
+    // device queries, and only then does ConPTY start painting. The probe below
+    // exists for headless callers that never attach an emulator.
+    if (options.probe === true) await this.#probePty(sessionId)
+    return { id: sessionId, shell, mode: 'pty', pid: entry.pid ?? null }
   }
 
   /**
@@ -708,11 +714,13 @@ export class Dsh {
     try {
       const out = entry.handle?.collected?.stdout?.readFrom(entry.outOffset)
       if (out?.text) {
+        this.#pushText(entry, out.text)
         entry.buffer += normalizeTerminalText(out.text)
         entry.outOffset = out.nextOffset ?? entry.outOffset + out.text.length
       }
       const err = entry.handle?.collected?.stderr?.readFrom(entry.errOffset)
       if (err?.text) {
+        this.#pushText(entry, err.text)
         entry.buffer += normalizeTerminalText(err.text)
         entry.errOffset = err.nextOffset ?? entry.errOffset + err.text.length
       }
@@ -724,6 +732,84 @@ export class Dsh {
     } catch {
       /* process gone */
     }
+  }
+
+  /* ------------------------------------------------ raw terminal transport */
+
+  /**
+   * Append one raw chunk and wake the attached terminals. Offsets are absolute
+   * byte positions: a reconnecting phone resumes exactly where it left off.
+   */
+  #pushChunk(entry, chunk) {
+    if (!chunk || chunk.length === 0) return
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk), 'utf8')
+    const offset = entry.totalBytes || 0
+    entry.chunks = entry.chunks || []
+    entry.chunks.push({ offset, data: buffer })
+    entry.totalBytes = offset + buffer.length
+    // Keep the last ~256 KiB of raw output for reconnects.
+    while (entry.chunks.length > 1 && entry.totalBytes - entry.chunks[0].offset > 262_144) entry.chunks.shift()
+    for (const listener of entry.listeners || []) {
+      try {
+        listener(offset, buffer)
+      } catch {
+        /* ignore a dead subscriber */
+      }
+    }
+  }
+
+  /** Newline-normalised text as raw bytes, used by the piped-shell mode. */
+  #pushText(entry, text) {
+    if (!text) return
+    this.#pushChunk(entry, Buffer.from(text.replace(/\r?\n/g, '\r\n'), 'utf8'))
+  }
+
+  termSubscribe(sessionId, from, onChunk) {
+    const entry = this.ptys.get(sessionId)
+    if (!entry) throw new Error('终端没有打开')
+    entry.listeners = entry.listeners || new Set()
+    const chunks = entry.chunks || []
+    const start = Math.max(0, Number(from) || 0)
+    let cursor = start
+    for (const chunk of chunks) {
+      const end = chunk.offset + chunk.data.length
+      if (end <= start) continue
+      const skip = Math.max(0, start - chunk.offset)
+      onChunk(chunk.offset + skip, chunk.data.subarray(skip))
+      cursor = end
+    }
+    // Nothing buffered but the shell already wrote text (piped mode): send it.
+    if (!chunks.length && entry.mode === 'pipe' && entry.buffer) {
+      const data = Buffer.from(entry.buffer, 'utf8')
+      onChunk(0, data)
+      cursor = data.length
+    }
+    const listener = (offset, data) => onChunk(offset, data)
+    entry.listeners.add(listener)
+    return {
+      cursor,
+      mode: entry.mode,
+      running: entry.running,
+      shell: entry.shell,
+      dispose: () => entry.listeners?.delete(listener),
+    }
+  }
+
+  async termWrite(sessionId, base64) {
+    const entry = this.ptys.get(sessionId)
+    if (!entry) throw new Error('终端没有打开')
+    const data = Buffer.from(String(base64 || ''), 'base64')
+    if (!data.length) return { ok: true }
+    if (entry.mode === 'pipe') {
+      const text = data.toString('utf8')
+      // Keep control bytes away from a piped shell that cannot interpret them.
+      const cleaned = text.replace(/\r\n?/g, '\n').replace(/[\u0000-\u0008\u000b-\u001f]/g, '')
+      if (!cleaned.trim()) return { ok: true }
+      await new Promise((resolve) => entry.handle.stdin.write(cleaned, resolve))
+      return { ok: true }
+    }
+    await entry.handle.write(data)
+    return { ok: true }
   }
 
   ptyRead(sessionId, cursor = 0) {
