@@ -43,8 +43,17 @@ export class Gateway {
     this.server = http.createServer((req, res) => {
       this.#handle(req, res).catch((error) => {
         this.log.error('request failed:', error?.stack || error)
-        if (!res.headersSent) sendJson(res, 500, { error: 'internal', message: String(error?.message || error) })
-        else res.end()
+        if (!res.headersSent) {
+          // Surface which Host capability is missing instead of a bare 500, so a
+          // Harness update that renamed something is immediately obvious.
+          sendJson(res, 503, {
+            error: 'internal',
+            message: String(error?.message || error),
+            missing: this.dsh.health(this.port).missing,
+          })
+        } else {
+          res.end()
+        }
       })
     })
     this.server.on('clientError', (_error, socket) => {
@@ -119,7 +128,22 @@ export class Gateway {
       const onListening = () => {
         server.removeListener('error', onError)
         server.on('error', (error) => this.log.error('server error:', error?.message || error))
-        resolve(server.address().port)
+        const bound = server.address().port
+        this.port = bound
+        // One compatibility line per start: after a Harness update this is the
+        // fastest way to see whether something the plugin needs disappeared.
+        try {
+          const health = this.dsh.health(bound)
+          if (health.ok) {
+            const off = Object.entries(health.optional).filter(([, on]) => !on).map(([name]) => name)
+            this.log.info(`capabilities ok; optional unavailable: ${off.length ? off.join(', ') : 'none'}`)
+          } else {
+            this.log.warn(`missing Host capabilities: ${health.missing.join(', ')} — affected features are disabled`)
+          }
+        } catch (error) {
+          this.log.warn('capability probe failed:', error?.message || error)
+        }
+        resolve(bound)
       }
       server.once('error', onError)
       server.once('listening', onListening)
@@ -298,6 +322,7 @@ export class Gateway {
     if (pathname === '/manifest.webmanifest') return this.#static(res, 'manifest.webmanifest')
     if (pathname.startsWith('/vendor/')) return this.#static(res, pathname.slice(1))
     if (pathname === '/api/ping') return sendJson(res, 200, { ok: true, server: { id: this.state.serverId, name: this.state.name } })
+    if (pathname === '/api/health') return sendJson(res, 200, this.dsh.health(this.port))
 
     if (pathname === '/api/pair' && req.method === 'POST') {
       const body = await readJson(req)

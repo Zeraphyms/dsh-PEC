@@ -128,8 +128,23 @@ docs/tailscale.md       电脑版 + 手机版 Tailscale 安装与使用
 - 设备令牌可在「手机连接」里随时移除；
 - 局域网内是明文 HTTP：请在个人 Wi-Fi 或 Tailscale 内使用，不要走公共 Wi-Fi。
 
-## 已知限制
+## DSH 升级兼容性
 
+插件直接调用 Harness 的 Host 服务，所以 Harness 升级后请先看一眼自检：
+
+```powershell
+curl.exe -sS http://127.0.0.1:7317/api/health
+```
+
+- `ok: true` 且 `missing: []` → 一切正常；
+- `missing` 里列出的是缺失的服务/方法，插件会**只禁用相关功能**，不会连带影响 DSH 其它部分；
+- 手机端列表页也会显示同样的提示条。
+
+设计上是抗升级的：激活全程 try/catch（插件坏了不会拖垮整个 profile）、启动时探测能力、接口出错返回 503 并附带缺失项、设置面板与手机端都有渲染兜底。详细说明见 [docs/compat.md](docs/compat.md)。
+
+> 从 0.2.1 升到 0.2.2 时出现过"整个 DSH 会话不可用"的情况，源头是 profile 里同时存在 `@deepseek-ai/dsh-experimental-terminal-bundle` 与 0.2.2 内置的可选终端行，终端注册表重复。插件本身不依赖这个 bundle（终端走基础服务 `subprocess`），可以安全移除。
+
+## 已知限制
 1. **终端**：手机端用 xterm.js 1:1 渲染原始字节流（包括 ANSI 颜色、光标定位、全屏程序）。PTY 走 `subprocess.spawnTerminal`（ConPTY / pty）；只有当这个环境根本不提供 PTY 时才降级为「持久 shell」（保留状态，但没有全屏 TUI），再退一步才是逐条命令模式。
 2. **审批接管有两档**：安全模式在电脑端页面在线时不抢请求（避免电脑上留下点不掉的弹窗）；强制模式即使电脑在线也由手机决定，代价是电脑端可能留一个待处理弹窗。人在外面用强制模式，回到电脑前记得处理掉。
 3. **设置只开放 volatile 字段**：布尔 / 数字 / 字符串 / 枚举，嵌套对象与需要重启的项不在这里改。

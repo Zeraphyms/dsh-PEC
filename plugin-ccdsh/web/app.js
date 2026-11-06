@@ -186,6 +186,13 @@ async function boot() {
     state.permissions = bootstrap.permissions || { options: [] }
     state.plugins = Array.isArray(bootstrap.plugins) ? bootstrap.plugins : []
     state.approvals = bootstrap.approvals || { pending: [], armedUntil: 0 }
+    // Compatibility self-check: the plugin reports which Host capabilities the
+    // running DSH still offers, so a Harness update is visible in the UI.
+    try {
+      state.health = await api('/api/health')
+    } catch {
+      state.health = null
+    }
     state.loading = false
     const remembered = localStorage.getItem('ccdsh_last_session')
     if (remembered && state.sessions.some((s) => s.id === remembered)) openSession(remembered)
@@ -312,6 +319,7 @@ function renderSessions() {
   })
 
   const list = el('div', { class: 'list' }, [
+    ...(state.health && !state.health.ok ? [healthBanner(state.health)] : []),
     el('div', { class: 'search' }, [
       svg(ICON.search, 18),
       el('input', {
@@ -339,6 +347,22 @@ function renderSessions() {
     list,
     el('button', { class: 'fab', onclick: newSession }, [svg(ICON.plus, 18), '新会话']),
   )
+}
+
+/** Shown only when the running DSH is missing something the plugin expects. */
+function healthBanner(health) {
+  const missing = (health.missing || []).slice(0, 4).join('、')
+  return el('div', {
+    class: 'tool',
+    style: 'margin:0 2px 10px;border-color:#6b4a12;background:#241a06',
+  }, [
+    el('div', { class: 'tool-head' }, [
+      el('span', { class: 'tool-name', style: 'color:#fbbf24' }, '插件与当前 DSH 版本不完全匹配'),
+    ]),
+    el('div', { class: 'tool-body', style: 'color:#ffd9a0;max-height:none' }, [
+      `缺少：${missing || '未知能力'}。相关功能会不可用，其余功能不受影响。更新插件通常即可恢复。`,
+    ]),
+  ])
 }
 
 function sessionRow(session) {

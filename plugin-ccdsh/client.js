@@ -51,7 +51,16 @@ window.__ModuleLoader__.load({
           const base = window.__CCDSH__ && window.__CCDSH__.origin ? window.__CCDSH__.origin : 'http://127.0.0.1:7317'
           const response = await fetch(`${base}/api/server`, { credentials: 'omit' })
           if (!response.ok) throw new Error(`HTTP ${response.status}`)
-          setStatus(await response.json())
+          const data = await response.json()
+          // The compatibility probe rides along; a failure here must not hide the
+          // pairing panel, so it is optional.
+          try {
+            const probe = await fetch(`${base}/api/health`, { credentials: 'omit' })
+            data.health = probe.ok ? await probe.json() : null
+          } catch {
+            data.health = null
+          }
+          setStatus(data)
           setError('')
         } catch (cause) {
           setError(String(cause && cause.message ? cause.message : cause))
@@ -72,6 +81,20 @@ window.__ModuleLoader__.load({
     }
 
     function Panel() {
+      try {
+        return renderPanel()
+      } catch (cause) {
+        // Never let this panel take the settings page down with it.
+        return h('div', { style: styles.wrap }, [
+          h('div', { style: styles.card }, [
+            h('div', { style: styles.label }, '手机连接'),
+            h('div', { style: styles.dim }, `面板渲染失败：${String(cause && cause.message ? cause.message : cause)}`),
+          ]),
+        ])
+      }
+    }
+
+    function renderPanel() {
       const { status, error, reload } = useStatus()
       if (error) {
         return h('div', { style: styles.wrap }, [
@@ -90,6 +113,12 @@ window.__ModuleLoader__.load({
       const code = status.pairing ? status.pairing.value : ''
 
       return h('div', { style: styles.wrap }, [
+        status.health && !status.health.ok
+          ? h('div', { style: styles.card }, [
+              h('div', { style: styles.label }, '兼容性'),
+              h('div', { style: styles.dim }, `当前 DSH 缺少：${(status.health.missing || []).join('、') || '未知'}。相关功能不可用，其余正常；更新插件通常即可恢复。`),
+            ])
+          : null,
         h('div', { style: styles.card }, [
           h('div', { style: styles.label }, '手机配对码'),
           h('div', { style: styles.code }, code || '—'),

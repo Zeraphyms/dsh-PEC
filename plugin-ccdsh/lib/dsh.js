@@ -28,6 +28,63 @@ export class Dsh {
     return AbortSignal.timeout(ms)
   }
 
+  /**
+   * Self-check used after a Harness update: which Host services still answer the
+   * methods this plugin calls. Missing entries disable individual features.
+   */
+  health(port) {
+    const required = {
+      sessionController: ['list', 'create', 'prompt', 'cancel', 'follow', 'modelCatalog', 'selectModel', 'rename'],
+      agents: ['get'],
+      sessions: ['get'],
+      settings: ['describe'],
+      workspaceRegistry: ['list'],
+        fs: ['resolve', 'listDir', 'stat', 'readText'],
+      subprocess: ['spawn'],
+    }
+    const capabilities = {}
+    const missing = []
+    for (const [name, methods] of Object.entries(required)) {
+      const service = this.#svc(name)
+      if (!service) {
+        capabilities[name] = { present: false, missing: methods }
+        missing.push(name)
+        continue
+      }
+      const absent = methods.filter((method) => typeof service[method] !== 'function')
+      capabilities[name] = { present: true, missing: absent }
+      if (absent.length) missing.push(`${name}.${absent.join('|')}`)
+    }
+
+    const subprocess = this.#svc('subprocess')
+    const settings = this.#svc('settings')
+    const registry = this.#svc('workspaceRegistry')
+    const optional = {
+      'terminal.pty': typeof subprocess?.spawnTerminal === 'function',
+      'terminal.pipe': typeof subprocess?.spawn === 'function',
+      'settings.write': typeof settings?.mutate === 'function' || typeof settings?.update === 'function',
+      'sessions.archive': typeof registry?.archiveSession === 'function',
+      'sessions.archivedSet': Array.isArray(registry?.archivedSessionIds),
+      providers: Boolean(this.#svc('credentials')) && typeof settings?.mutate === 'function',
+      approvals: typeof this.#svc('typertGateway')?.hasLiveClient === 'function',
+    }
+
+    return {
+      ok: missing.length === 0,
+      port,
+      missing,
+      capabilities,
+      optional,
+      runtime: {
+        electron: process.versions.electron || null,
+        node: process.versions.node || null,
+        chrome: process.versions.chrome || null,
+      },
+      devices: 0,
+      pty: this.ptys.size,
+    }
+  }
+
   async listSessions() {
     const controller = this.#svc('sessionController')
     if (!controller) return { items: [] }
