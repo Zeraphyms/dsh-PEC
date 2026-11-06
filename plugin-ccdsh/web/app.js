@@ -676,7 +676,12 @@ function currentModel() {
 
 function modelLabel() {
   const model = currentModel()
-  return model ? model.name : ''
+  if (!model) return ''
+  const selection = state.current?.model || state.models.default
+  const effort = model.reasoning?.efforts?.length
+    ? selection?.reasoningEffort || model.reasoning?.defaultEffort
+    : ''
+  return effort ? `${model.name} · ${effort}` : model.name
 }
 
 function refreshSessionMeta() {
@@ -936,13 +941,18 @@ function newSession() {
 
 /* ------------------------------------------------------------------ sheets */
 
+/** The sheet currently on screen, so the Android back gesture can close it. */
+let activeSheet = null
+
 function openSheet(builder) {
   const mask = el('div', { class: 'sheet-mask', onclick: (event) => { if (event.target === mask) close() } })
   const sheet = el('div', { class: 'sheet' }, [el('div', { class: 'sheet-grab' }), ...builder(close)])
   mask.append(sheet)
   document.body.append(mask)
+  activeSheet = mask
   function close() {
     mask.remove()
+    if (activeSheet === mask) activeSheet = null
   }
   return close
 }
@@ -1149,27 +1159,30 @@ function modelSheet(close) {
   if (state.models.failures?.length) {
     rows.push(el('div', { class: 'small', text: '部分模型不可用：' + state.models.failures.map((f) => f.name || f.id).join('、') }))
   }
+
+  const apply = async (provider, model, reasoningEffort) => {
+    try {
+      const body = { provider, model }
+      if (reasoningEffort) body.reasoningEffort = reasoningEffort
+      await api(`/api/sessions/${encodeURIComponent(state.current.id)}/model`, { method: 'POST', body })
+      state.current.model = body
+      close()
+      refreshSessionMeta()
+      toast(`已切换到 ${model}${reasoningEffort ? ' · ' + reasoningEffort : ''}`)
+    } catch (error) {
+      toast('切换失败：' + error.message)
+    }
+  }
+
   for (const group of state.models.groups) {
     rows.push(el('h2', { text: group.name }))
     for (const model of group.models) {
       const selected = selection && selection.model === model.id
+      const efforts = model.reasoning?.efforts || []
       rows.push(
         el('button', {
           class: `option${selected ? ' sel' : ''}`,
-          onclick: async () => {
-            try {
-              await api(`/api/sessions/${encodeURIComponent(state.current.id)}/model`, {
-                method: 'POST',
-                body: { provider: group.id, model: model.id },
-              })
-              state.current.model = { provider: group.id, model: model.id }
-              close()
-              refreshSessionMeta()
-              toast('已切换到 ' + model.name)
-            } catch (error) {
-              toast('切换失败：' + error.message)
-            }
-          },
+          onclick: () => apply(group.id, model.id),
         }, [
           el('div', { class: 'name' }, [
             el('div', { text: model.name }),
@@ -1178,6 +1191,24 @@ function modelSheet(close) {
           selected ? el('div', { class: 'check', text: '✓' }) : null,
         ]),
       )
+      if (efforts.length) {
+        const currentEffort = selected
+          ? selection.reasoningEffort || model.reasoning?.defaultEffort || ''
+          : ''
+        rows.push(
+          el('div', { class: 'effort-row' }, [
+            el('span', { class: 'effort-label', text: '推理' }),
+            ...efforts.map((effort) => {
+              const id = effort.id || effort.value || effort
+              const name = effort.name || effort.label || id
+              return el('button', {
+                class: `chip${currentEffort === id ? ' on' : ''}`,
+                onclick: () => apply(group.id, model.id, id),
+              }, [name])
+            }),
+          ]),
+        )
+      }
     }
   }
   if (!rows.length) rows.push(el('div', { class: 'small', text: '没有可用模型' }))
@@ -1288,24 +1319,30 @@ function guardOpen(key) {
   return true
 }
 
+/** Open panels, newest last, so the Android back gesture closes the top one. */
+const panelStack = []
+
 function panelShell({ title, subtitle, right = [] }) {
   const titleEl = el('b', { text: title })
   const subtitleEl = el('span', { text: subtitle || '' })
   const body = el('div', { class: 'panel-body' })
-  const close = () => panel.remove()
   const panel = el('div', { class: 'panel' }, [
     el('div', { class: 'panel-head' }, [
-      el('button', { class: 'icon-btn', onclick: close }, [svg(ICON.back)]),
+      el('button', { class: 'icon-btn', onclick: () => view.close() }, [svg(ICON.back)]),
       el('div', { class: 'panel-title' }, [titleEl, subtitleEl]),
       ...right,
     ]),
     body,
   ])
   document.body.append(panel)
-  return {
+  const view = {
     panel,
     body,
-    close,
+    close() {
+      panel.remove()
+      const index = panelStack.indexOf(view)
+      if (index >= 0) panelStack.splice(index, 1)
+    },
     setTitle(value, sub) {
       titleEl.textContent = value
       if (sub !== undefined) subtitleEl.textContent = sub
@@ -1316,6 +1353,34 @@ function panelShell({ title, subtitle, right = [] }) {
       for (const node of nodes) head.append(node)
     },
   }
+  panelStack.push(view)
+  return view
+}
+
+/**
+ * Android back: close the top panel, then a sheet, then leave the chat. Only a
+ * back gesture at the session list returns false, which lets the shell ask
+ * whether to quit.
+ */
+window.__ccdshBack = () => {
+  const top = panelStack[panelStack.length - 1]
+  if (top) {
+    top.close()
+    return true
+  }
+  if (activeSheet) {
+    activeSheet.remove()
+    activeSheet = null
+    return true
+  }
+  if (state.view === 'chat') {
+    closeStream()
+    state.view = 'sessions'
+    state.current = null
+    render()
+    return true
+  }
+  return false
 }
 
 /* ------------------------------------------------------------------ files */

@@ -82,6 +82,7 @@ public class MainActivity extends Activity {
     private String token;
     private String serverName;
     private boolean setupMode;
+    private boolean backPending;
     private ValueCallback<Uri[]> filePathCallback;
     private final ExecutorService io = Executors.newSingleThreadExecutor();
 
@@ -537,19 +538,31 @@ public class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
-        if (!setupMode && web != null && web.canGoBack()) {
-            web.goBack();
+        if (setupMode || web == null) {
+            super.onBackPressed();
             return;
         }
-        if (!setupMode && web != null) {
-            new AlertDialog.Builder(this)
-                    .setMessage("退出 cc-dsh？")
-                    .setPositiveButton("退出", (d, w) -> finish())
-                    .setNegativeButton("取消", null)
-                    .show();
-            return;
-        }
-        super.onBackPressed();
+        // Let the page consume the gesture first: it closes a panel, closes a
+        // sheet, or leaves the conversation. Only at the session list does back
+        // mean "quit", so an edge swipe inside the app never pops the exit
+        // dialog by surprise.
+        if (backPending) return;
+        backPending = true;
+        web.evaluateJavascript(
+                "(function(){try{return String(!!(window.__ccdshBack&&window.__ccdshBack()))}catch(e){return 'false'}})()",
+                value -> {
+                    backPending = false;
+                    boolean handled = value != null && value.contains("true");
+                    if (!handled) confirmExit();
+                });
+    }
+
+    private void confirmExit() {
+        new AlertDialog.Builder(this)
+                .setMessage("退出 cc-dsh？")
+                .setPositiveButton("退出", (d, w) -> finish())
+                .setNegativeButton("取消", null)
+                .show();
     }
 
     @Override
