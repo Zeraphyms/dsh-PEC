@@ -45,7 +45,7 @@ node .tools/smoke-test.cjs
 | --- | --- | --- |
 | 0.2.1-rc.5 | 1.0 – 1.5 | 基线 |
 | 0.2.2-rc.1 | 1.6 | 接口全通；`assistant-stream` 帧改为嵌套 `frame.chunk.text`，插件早已按嵌套解析，无需改动 |
-| 0.2.2-rc.1 | 1.7.0 | 增加 `/api/health` 自检、激活兜底、客户端渲染兜底 |
+| 0.2.2-rc.1 | 1.6.1 | 增加 `/api/health` 自检、激活兜底、客户端渲染兜底 |
 
 ## 这次升级为什么会把 DSH 一起带崩
 
@@ -55,7 +55,7 @@ node .tools/smoke-test.cjs
 - 真正的高风险来源是 **`@deepseek-ai/dsh-experimental-terminal-bundle`**：它在 profile 里插入了 `dsh-terminal` + `dsh-terminal-bash` 的一组行，而 0.2.2 起终端已经是可选内置能力（`optional-terminal-*`），同名的终端注册表叠在一起时，组合失败会表现为"会话不可用 / 会话消失"；
 - 因此插件的终端功能**不依赖**这个 bundle：它用的是基础服务 `subprocess`，`/api/health` 里的 `terminal.pty` / `terminal.pipe` 会告诉你当前机器上真 PTY 是否可用。
 
-升级到 1.7.0 之后，如果你的 profile 里还留着那个 bundle，可以安全地把它从 `dsh.profile.bundles` 里去掉（终端不会消失，预置里的 `persistent-shell` 仍提供 PowerShell 终端）。
+升级到 1.6.1 之后，如果你的 profile 里还留着那个 bundle，可以安全地把它从 `dsh.profile.bundles` 里去掉（终端不会消失，预置里的 `persistent-shell` 仍提供 PowerShell 终端）。
 
 ## 遇到问题时给开发者的信息
 
