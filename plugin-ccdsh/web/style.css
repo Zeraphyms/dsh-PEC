@@ -28,6 +28,7 @@
   --dsw-border-l4: #00000029;
   --dsw-brand: #426efe;            /* DeepSeek primary (com.deepseek.chat) */
   --dsw-brand-soft: #e9efff;
+  --dsw-bubble-user: #edf1fe;      /* the app's light periwinkle user bubble */
   --dsw-success: #22c55e;
   --dsw-success-soft: #e8f8ee;
   --dsw-danger: #ec1313;
@@ -90,6 +91,7 @@ body[data-ds-dark-theme] {
   --dsw-border-l4: #ffffff3d;
   --dsw-brand: #507bf2;
   --dsw-brand-soft: #26314c;
+  --dsw-bubble-user: #2a3350;
   --dsw-success: #22c55e;
   --dsw-success-soft: #1a2b21;
   --dsw-danger: #f25a5a;
@@ -334,13 +336,38 @@ a { color: var(--dsw-brand); text-decoration: none; }
 .row.user .bubble {
   max-width: 86%;
   padding: 10px 14px;
-  background: var(--dsw-bg-platform);
+  background: var(--dsw-bubble-user);
   border: 0;
   border-radius: var(--radius-lg);
   border-bottom-right-radius: 6px;
   font-size: var(--fs-body);
 }
 .row.assistant .bubble { color: var(--dsw-label-primary); }
+.col { display: flex; flex-direction: column; min-width: 0; max-width: 100%; }
+
+/* Answer actions: copy, read aloud — small and quiet, like the desktop row. */
+.msg-actions { display: flex; align-items: center; gap: 4px; margin-top: 6px; margin-left: -6px; }
+.msg-act {
+  width: 32px; height: 32px;
+  display: grid; place-items: center;
+  border-radius: var(--radius-sm);
+  color: var(--dsw-label-tertiary);
+}
+.msg-act:active { background: var(--dsw-bg-platform); color: var(--dsw-label-secondary); }
+
+/* Empty transcript. */
+.chat-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 10px;
+  padding: 64px 28px;
+}
+.chat-empty .empty-mark { width: 64px; height: 64px; opacity: .92; }
+.chat-empty .empty-title { font-size: 19px; font-weight: 600; letter-spacing: -0.01em; margin-top: 6px; }
+.chat-empty .empty-sub { font-size: var(--fs-meta); color: var(--dsw-label-tertiary); line-height: 1.6; max-width: 260px; }
 
 .bubble .md-code {
   font-family: var(--font-code);
@@ -363,6 +390,16 @@ a { color: var(--dsw-brand); text-decoration: none; }
   border-radius: var(--radius-xs);
 }
 
+/* Markdown-lite transcript blocks. */
+.md { white-space: normal; }
+.md > *:first-child { margin-top: 0; }
+.md > *:last-child { margin-bottom: 0; }
+.md-p { margin: 0 0 10px; }
+.md-h { font-size: calc(var(--fs-body) + 1px); font-weight: 600; margin: 14px 0 6px; line-height: 1.45; }
+.md-list { margin: 0 0 10px; padding-left: 20px; }
+.md-list li { margin: 2px 0; }
+.md a { color: var(--dsw-brand); text-decoration: underline; text-underline-offset: 2px; word-break: break-all; }
+
 .note-pill {
   font-size: var(--fs-caption);
   color: var(--dsw-label-secondary);
@@ -373,14 +410,34 @@ a { color: var(--dsw-brand); text-decoration: none; }
 }
 
 .reasoning {
-  margin-top: 10px;
-  border-top: 1px solid var(--dsw-border-l1);
-  padding-top: 10px;
+  margin: 0 0 8px;
+  border: 0;
+  padding: 0;
   color: var(--dsw-label-secondary);
   font-size: calc(var(--fs-body) - 1px);
   line-height: 1.62;
 }
-.reasoning summary { cursor: pointer; color: var(--dsw-label-tertiary); font-size: var(--fs-meta); }
+.reasoning summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  color: var(--dsw-label-tertiary);
+  font-size: var(--fs-meta);
+  list-style: none;
+}
+.reasoning summary::-webkit-details-marker { display: none; }
+.reasoning summary::after {
+  content: '';
+  width: 6px; height: 6px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  margin-left: 2px;
+  transition: transform var(--ds-transition-duration-fast, .1s) ease;
+}
+.reasoning[open] summary::after { transform: rotate(45deg); }
+.reasoning > div { margin-top: 8px; white-space: pre-wrap; word-break: break-word; }
 
 .tool {
   border: 1px solid var(--dsw-border-l2);
@@ -540,6 +597,7 @@ a { color: var(--dsw-brand); text-decoration: none; }
 }
 .send:active { transform: scale(0.94); }
 .send.stop { background: var(--dsw-label-primary); color: var(--dsw-bg-base); }
+.send.idle { background: var(--dsw-bg-platform); color: var(--dsw-label-tertiary); }
 .send[disabled] { opacity: .35; }
 
 /* ---------------------------------------------------------------- sheets */

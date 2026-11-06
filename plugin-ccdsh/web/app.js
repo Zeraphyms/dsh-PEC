@@ -139,6 +139,8 @@ const ICON = {
   terminal: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3"/><path d="M13 15h4"/>',
   sliders: '<path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/>',
   file: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/>',
+  copy: '<rect x="9" y="9" width="11" height="11" rx="2.5"/><path d="M15 5.5A2.5 2.5 0 0 0 12.5 3H6a3 3 0 0 0-3 3v6.5A2.5 2.5 0 0 0 5.5 15"/>',
+  speaker: '<path d="M4 9.5h3l4.5-3.6v12.2L7 14.5H4z"/><path d="M15.5 9a4 4 0 0 1 0 6"/><path d="M18 6.6a7.4 7.4 0 0 1 0 10.8"/>',
 }
 
 function toast(message, ms = 2200) {
@@ -479,10 +481,14 @@ function chatRows() {
       const reasoning = reasoningOf(message?.content)
       if (!text && !reasoning) continue
       const bubble = el('div', { class: 'bubble' }, [
-        text ? el('div', { text }) : null,
         reasoning ? reasoningNode(reasoning) : null,
+        text ? el('div', { class: 'md' }, [renderMarkdown(text)]) : null,
       ])
-      rows.push(el('div', { class: 'row assistant' }, [bubble]))
+      rows.push(
+        el('div', { class: 'row assistant' }, [
+          el('div', { class: 'col' }, [bubble, text ? messageActions(text) : null]),
+        ]),
+      )
       lastAssistant = bubble
       continue
     }
@@ -514,15 +520,79 @@ function chatRows() {
     rows.push(
       el('div', { class: 'row assistant' }, [
         el('div', { class: 'bubble', id: 'live-bubble' }, [
-          state.live.text ? el('div', { id: 'live-text', text: state.live.text }) : null,
           state.live.reasoning ? reasoningNode(state.live.reasoning) : null,
+          state.live.text ? el('div', { id: 'live-text', text: state.live.text }) : null,
         ]),
       ]),
     )
   }
 
-  if (rows.length === 0) rows.push(el('div', { class: 'empty', text: '开始和电脑上的 DSH 对话吧' }))
+  if (rows.length === 0) rows.push(emptyChat())
   return rows
+}
+
+/** Copy / read-aloud under an answer, like the desktop transcript's actions. */
+function messageActions(text) {
+  const actions = []
+  actions.push(
+    el('button', {
+      class: 'msg-act',
+      title: '复制',
+      onclick: async () => {
+        try {
+          await navigator.clipboard.writeText(text)
+          toast('已复制')
+        } catch {
+          toast('这台设备不允许剪贴板')
+        }
+      },
+    }, [svg(ICON.copy, 17)]),
+  )
+  if (typeof window.speechSynthesis === 'object') {
+    actions.push(
+      el('button', {
+        class: 'msg-act',
+        title: '朗读',
+        onclick: () => {
+          try {
+            window.speechSynthesis.cancel()
+            const utterance = new SpeechSynthesisUtterance(text)
+            utterance.lang = 'zh-CN'
+            window.speechSynthesis.speak(utterance)
+          } catch {
+            toast('这台设备没有朗读能力')
+          }
+        },
+      }, [svg(ICON.speaker, 17)]),
+    )
+  }
+  return el('div', { class: 'msg-actions' }, actions)
+}
+
+/** Empty transcript: brand mark, greeting, and the way to start. */
+function emptyChat() {
+  return el('div', { class: 'chat-empty' }, [
+    brandMark(),
+    el('div', { class: 'empty-title', text: '开始和电脑上的 DSH 对话吧' }),
+    el('div', { class: 'empty-sub', text: '消息会发到电脑上这个会话里，模型、权限都按你选好的来' }),
+  ])
+}
+
+/** Inline brand mark, so the empty state never waits on a network asset. */
+function brandMark() {
+  const ns = 'http://www.w3.org/2000/svg'
+  const node = document.createElementNS(ns, 'svg')
+  node.setAttribute('viewBox', '0 0 64 64')
+  node.setAttribute('width', '64')
+  node.setAttribute('height', '64')
+  node.setAttribute('class', 'empty-mark')
+  node.innerHTML =
+    '<defs><linearGradient id="ccdsh-mark" x1="0" y1="0" x2="1" y2="1">' +
+    '<stop offset="0" stop-color="#426efe"/><stop offset="1" stop-color="#1d4ed8"/></linearGradient></defs>' +
+    '<rect x="2" y="2" width="60" height="60" rx="17" fill="url(#ccdsh-mark)"/>' +
+    '<path d="M21 24.5l7.5 7.5-7.5 7.5" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>' +
+    '<path d="M34.5 40.5h9" stroke="#fff" stroke-width="4" stroke-linecap="round"/>'
+  return node
 }
 
 function reasoningNode(text) {
@@ -579,6 +649,97 @@ function textOf(content) {
     .join('\n')
 }
 
+/* ------------------------------------------------------------ markdown-lite */
+
+/**
+ * Answers arrive as Markdown. Rendering it keeps the transcript readable the
+ * way the desktop shows it; everything is built from text nodes, so model
+ * output can never inject markup.
+ */
+function renderMarkdown(text) {
+  const frag = document.createDocumentFragment()
+  const lines = String(text || '').split('\n')
+  let block = null          // open paragraph / list / code element
+  let code = null           // open <pre> while inside a fence
+  let list = null
+
+  const closeBlock = () => { block = null }
+  const closeList = () => { list = null }
+
+  for (const raw of lines) {
+    const line = raw.replace(/\s+$/, '')
+
+    if (code) {
+      if (/^```/.test(line.trim())) {
+        frag.append(code)
+        code = null
+      } else {
+        code.textContent += (code.textContent ? '\n' : '') + raw
+      }
+      continue
+    }
+
+    const fence = /^```(\w*)/.exec(line.trim())
+    if (fence) {
+      closeBlock(); closeList()
+      code = el('pre', { class: 'md-code' })
+      if (fence[1]) code.dataset.lang = fence[1]
+      continue
+    }
+
+    if (!line.trim()) { closeBlock(); closeList(); continue }
+
+    const heading = /^(#{1,4})\s+(.*)$/.exec(line)
+    if (heading) {
+      closeBlock(); closeList()
+      frag.append(el(`h${Math.min(4, heading[1].length + 2)}`, { class: 'md-h' }, [inlineMarkdown(heading[2])]))
+      continue
+    }
+
+    const bullet = /^[-*]\s+(.*)$/.exec(line)
+    if (bullet) {
+      closeBlock()
+      if (!list) { list = el('ul', { class: 'md-list' }); frag.append(list) }
+      list.append(el('li', {}, [inlineMarkdown(bullet[1])]))
+      continue
+    }
+
+    const ordered = /^\d+[.)]\s+(.*)$/.exec(line)
+    if (ordered) {
+      closeBlock()
+      if (!list) { list = el('ol', { class: 'md-list' }); frag.append(list) }
+      list.append(el('li', {}, [inlineMarkdown(ordered[1])]))
+      continue
+    }
+
+    closeList()
+    if (!block) { block = el('p', { class: 'md-p' }); frag.append(block) }
+    if (block.childNodes.length) block.append(el('br'))
+    block.append(inlineMarkdown(line))
+  }
+
+  if (code) frag.append(code)
+  return frag
+}
+
+/** `code`, **bold** and bare links, built from text nodes only. */
+function inlineMarkdown(text) {
+  const frag = document.createDocumentFragment()
+  const pattern = /(`[^`]+`)|(\*\*[^*]+\*\*)|(https?:\/\/[^\s)]+)/g
+  let last = 0
+  let match
+  while ((match = pattern.exec(text))) {
+    if (match.index > last) frag.append(document.createTextNode(text.slice(last, match.index)))
+    const token = match[0]
+    if (token.startsWith('`')) frag.append(el('code', { text: token.slice(1, -1) }))
+    else if (token.startsWith('**')) frag.append(el('strong', { text: token.slice(2, -2) }))
+    else frag.append(el('a', { href: token, target: '_blank', rel: 'noreferrer', text: token }))
+    last = match.index + token.length
+  }
+  if (last < text.length) frag.append(document.createTextNode(text.slice(last)))
+  return frag
+}
+
 function reasoningOf(content) {
   if (!Array.isArray(content)) return ''
   return content
@@ -594,6 +755,7 @@ function composerNode() {
     oninput: (event) => {
       event.target.style.height = 'auto'
       event.target.style.height = Math.min(event.target.scrollHeight, 140) + 'px'
+      button.classList.toggle('idle', idle())
     },
     onkeydown: (event) => {
       if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
@@ -631,6 +793,7 @@ function composerNode() {
       ),
     )
     attachRow.style.display = draft.length ? 'flex' : 'none'
+    button.classList.toggle('idle', idle())
   }
 
   async function addFiles(files) {
@@ -657,11 +820,11 @@ function composerNode() {
     renderAttachments()
   }
 
+  const idle = () => !state.current?.running && !input.value.trim() && !(state.draft || []).length
   const button = el('button', {
-    class: `send${state.current?.running ? ' stop' : ''}`,
+    class: `send${state.current?.running ? ' stop' : ''}${idle() ? ' idle' : ''}`,
     onclick: () => (state.current?.running ? stop() : send()),
   }, [svg(state.current?.running ? ICON.stop : ICON.send, 19)])
-  if (!state.current?.running && !input.value.trim()) button.disabled = false
 
   async function send() {
     const text = input.value.trim()
@@ -671,6 +834,7 @@ function composerNode() {
     input.style.height = 'auto'
     state.draft = []
     renderAttachments()
+    button.classList.toggle('idle', idle())
     try {
       await api(`/api/sessions/${encodeURIComponent(state.current.id)}/prompt`, {
         method: 'POST',
