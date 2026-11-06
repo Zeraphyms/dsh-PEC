@@ -70,8 +70,6 @@ Write-Host '2/6 aapt2 link'
   --java "$work\gen" `
   --min-sdk-version 26 `
   --target-sdk-version 36 `
-  --version-code 2 `
-  --version-name 1.0.1 `
   "$work\res.flata"
 if ($LASTEXITCODE -ne 0) { throw 'aapt2 link failed' }
 

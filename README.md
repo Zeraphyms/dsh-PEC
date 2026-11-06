@@ -66,6 +66,17 @@ android-shell/          Android 外壳（原生 Java，无 Gradle）
 docs/tailscale.md       电脑版 + 手机版 Tailscale 安装与使用
 ```
 
+## 下载与安装
+
+到 [**Releases**](https://github.com/huajikano/cc-dsh/releases) 下载两个文件：
+
+| 文件 | 用途 |
+| --- | --- |
+| `cc-dsh-plugin-<版本>.zip` | DSH 插件。解压得到 `plugin-ccdsh/`，在 DSH 里「安装本地目录」指向它 |
+| `cc-dsh-<版本>.apk` | Android 手机端（约 25 KB） |
+
+插件安装步骤（含校验、端口确认、卸载）见 **[docs/INSTALL-plugin.md](docs/INSTALL-plugin.md)**。
+
 ## 快速开始
 
 ### 0. 前置
