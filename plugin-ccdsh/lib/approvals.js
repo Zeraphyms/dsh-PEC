@@ -16,28 +16,56 @@ export class ApprovalHub {
     this.log = log
     this.pending = new Map()
     this.armedUntil = 0
+    this.forced = false
     this.disposed = false
     this.watchers = new Set()
     this.timers = new Set()
     this.windowMs = 150_000
+    this.offApproval = null
 
-    this.offApproval = ctx.on(
+    // Registered first so a request can be claimed before the desktop page's
+    // forwarder sees it; re-registered on every arm to stay in front of
+    // forwarders that pages add when they (re)connect.
+    this.#register()
+  }
+
+  #register() {
+    if (this.offApproval) return
+    this.offApproval = this.ctx.on(
       'approval/request',
       async (request, next) => {
         if (this.disposed || !this.isArmed()) return next()
+        // Safe mode: when a desktop page is attached and can answer, let it.
+        // Claiming there would leave its dialog stranded, because answering on
+        // the phone never settles the page's pending request.
+        if (!this.forced && this.desktopAttached()) return next()
         return this.#ask(request, next)
       },
       { prepend: true },
     )
   }
 
-  dispose() {
-    this.disposed = true
+  #unregister() {
     try {
       this.offApproval?.()
     } catch {
       /* ignore */
     }
+    this.offApproval = null
+  }
+
+  /** Whether a browser page that can answer is attached right now. */
+  desktopAttached() {
+    try {
+      return Boolean(this.ctx.get('typertGateway')?.hasLiveClient?.())
+    } catch {
+      return false
+    }
+  }
+
+  dispose() {
+    this.disposed = true
+    this.#unregister()
     for (const timer of this.timers) clearTimeout(timer)
     this.timers.clear()
     this.reset()
@@ -47,15 +75,20 @@ export class ApprovalHub {
     return this.armedUntil > Date.now()
   }
 
-  arm(minutes) {
+  arm(minutes, force = false) {
     const ms = Math.max(0, Number(minutes) || 0) * 60_000
     this.armedUntil = ms ? Date.now() + ms : 0
+    this.forced = Boolean(force) && ms > 0
     if (!ms) this.reset()
+    // Put our listener back at the head of the waterfall for this window.
+    this.#unregister()
+    if (ms) this.#register()
     this.#changed()
     return this.snapshot()
   }
 
   reset() {
+    this.forced = false
     for (const [id, entry] of this.pending) {
       entry.resolve?.(null)
       this.pending.delete(id)
@@ -66,6 +99,8 @@ export class ApprovalHub {
     return {
       armedUntil: this.armedUntil,
       armed: this.isArmed(),
+      forced: this.forced,
+      desktopAttached: this.desktopAttached(),
       pending: [...this.pending.values()].map(({ id, toolName, sessionId, reason, detail, startedAt }) => ({
         id,
         tool: toolName,

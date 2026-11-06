@@ -520,6 +520,267 @@ export class Dsh {
     }
   }
 
+  /* ------------------------------------------------------------ pty (real terminal) */
+
+  get ptys() {
+    if (!this._ptys) this._ptys = new Map()
+    return this._ptys
+  }
+
+  ptyStatus(sessionId) {
+    const entry = this.ptys.get(sessionId)
+    if (!entry) return { open: false, running: false, shell: '', pid: null }
+    return {
+      open: true,
+      running: entry.running,
+      shell: entry.shell,
+      mode: entry.mode,
+      pid: entry.pid ?? null,
+      rawChunks: entry.rawChunks || 0,
+      rawBytes: entry.rawBytes || 0,
+      preview: (entry.preview || '').slice(0, 160),
+    }
+  }
+
+  /** Open (or reuse) one real PTY for a session through ConPTY / pty. */
+  async ptyOpen(sessionId, options = {}) {
+    const existing = this.ptys.get(sessionId)
+    if (existing) return { id: sessionId, shell: existing.shell, pid: existing.pid ?? null, reused: true }
+
+    const subprocess = this.#svc('subprocess')
+    if (!subprocess?.spawnTerminal) throw new Error('这台电脑没有启用终端（subprocess.spawnTerminal 不可用）')
+
+    const shell = options.shell && fs.existsSync(options.shell) ? options.shell : resolveWindowsShell()
+    const isBash = /bash\.exe$/i.test(shell)
+    const argv = isBash
+      ? [shell, '-i', '-l']
+      : [shell, '-NoLogo', '-NoProfile']
+    if (isBash) {
+      // Git Bash needs a sane TERM and no profile surprises for a readable PTY.
+      process.env.TERM = process.env.TERM || 'xterm-256color'
+    }
+
+    const handle = await subprocess.spawnTerminal({
+      argv,
+      cwd: this.#sessionCwd(sessionId),
+      rows: 30,
+      cols: 100,
+      terminalType: process.platform === 'win32' ? 'conpty' : 'xterm-256color',
+      // The activity wrapper rewrites argv and swallows the console stream, so
+      // the phone would only ever see the initial ConPTY handshake.
+      shellActivity: false,
+      graceMs: 3000,
+    })
+
+    const entry = {
+      handle,
+      pid: handle.pid,
+      shell,
+      mode: 'pty',
+      buffer: '',
+      cursor: 0,
+      running: true,
+      cols: 100,
+      rows: 30,
+      startedAt: Date.now(),
+    }
+    handle.output.on('data', (chunk) => {
+      entry.rawChunks = (entry.rawChunks || 0) + 1
+      entry.rawBytes = (entry.rawBytes || 0) + chunk.length
+      if (!entry.preview) entry.preview = JSON.stringify(chunk.toString('utf8').slice(0, 80))
+      entry.buffer += normalizeTerminalText(chunk.toString('utf8'))
+      if (entry.buffer.length > 400_000) {
+        const dropped = entry.buffer.length - 300_000
+        entry.buffer = `…（输出过长，只保留最后 300k）\n${entry.buffer.slice(dropped)}`
+        entry.cursor = Math.max(0, entry.cursor - dropped)
+      }
+    })
+    handle.output.on('error', () => {})
+    try {
+      if (typeof handle.output.resume === 'function') handle.output.resume()
+    } catch {
+      /* ignore */
+    }
+    handle.done.then(
+      () => {
+        entry.running = false
+        entry.buffer += '\n[进程已退出]\n'
+      },
+      (error) => {
+        entry.running = false
+        entry.buffer += `\n[终端已关闭] ${error?.message || ''}\n`
+      },
+    )
+    this.ptys.set(sessionId, entry)
+    this.log.info(`pty opened for ${sessionId}: ${shell}`)
+    // Wait out the probe window before answering, so the first keystrokes can
+    // never race the fallback switch.
+    const mode = await this.#probePty(sessionId)
+    return { id: sessionId, shell, mode, pid: entry.pid ?? null }
+  }
+
+  /**
+   * Some Windows setups hand back a ConPTY that only ever emits its handshake.
+   * If no real output arrives shortly after spawn, replace it with a persistent
+   * shell over pipes: still one long-lived session with state, no full TTY.
+   */
+  #probePty(sessionId) {
+    const entry = this.ptys.get(sessionId)
+    if (!entry) return Promise.resolve('pty')
+    return new Promise((resolve) => {
+      const timer = setTimeout(async () => {
+        const current = this.ptys.get(sessionId)
+        if (current !== entry) return resolve(current?.mode || 'pty')
+        if ((entry.rawBytes || 0) > 40) return resolve('pty')
+        this.log.warn(`pty for ${sessionId} produced no output; falling back to a persistent shell`)
+        try {
+          await this.#switchToPipeShell(sessionId, entry.shell)
+          resolve(this.ptys.get(sessionId)?.mode || 'pipe')
+        } catch (error) {
+          this.log.warn('persistent shell fallback failed:', error?.message || error)
+          resolve('pty')
+        }
+      }, 1500)
+      timer.unref?.()
+    })
+  }
+
+  async #switchToPipeShell(sessionId, shell) {
+    const previous = this.ptys.get(sessionId)
+    if (previous?.handle?.terminate) {
+      try {
+        await previous.handle.terminate()
+      } catch {
+        /* ignore */
+      }
+    }
+    this.ptys.delete(sessionId)
+
+    const subprocess = this.#svc('subprocess')
+    if (!subprocess?.spawn) throw new Error('subprocess unavailable')
+    const isBash = /bash\.exe$/i.test(shell)
+    const argv = isBash ? [shell, '-i'] : [shell, '-NoLogo', '-NoProfile', '-Command', '-']
+    const handle = subprocess.spawn({
+      argv,
+      cwd: this.#sessionCwd(sessionId),
+      stdio: {
+        stdin: 'pipe',
+        stdout: { maxBytes: 400_000, spill: { maxBytes: 8_000_000 } },
+        stderr: { maxBytes: 200_000, spill: { maxBytes: 2_000_000 } },
+      },
+      graceMs: 3000,
+    })
+
+    const entry = {
+      handle,
+      pid: handle.pid ?? 0,
+      shell,
+      mode: 'pipe',
+      buffer: '',
+      cursor: 0,
+      running: true,
+      cols: 100,
+      rows: 30,
+      outOffset: 0,
+      errOffset: 0,
+      startedAt: Date.now(),
+      timer: null,
+    }
+    entry.timer = setInterval(() => this.#drainPipeShell(entry), 250)
+    entry.timer.unref?.()
+    this.#drainPipeShell(entry)
+    handle.done.then(
+      (outcome) => {
+        entry.running = false
+        if (entry.timer) clearInterval(entry.timer)
+        entry.buffer += `\n[进程已退出 ${outcome?.exitCode ?? ''}]\n`
+      },
+      () => {
+        entry.running = false
+        if (entry.timer) clearInterval(entry.timer)
+      },
+    )
+    this.ptys.set(sessionId, entry)
+    return { mode: 'pipe' }
+  }
+
+  #drainPipeShell(entry) {
+    try {
+      const out = entry.handle?.collected?.stdout?.readFrom(entry.outOffset)
+      if (out?.text) {
+        entry.buffer += normalizeTerminalText(out.text)
+        entry.outOffset = out.nextOffset ?? entry.outOffset + out.text.length
+      }
+      const err = entry.handle?.collected?.stderr?.readFrom(entry.errOffset)
+      if (err?.text) {
+        entry.buffer += normalizeTerminalText(err.text)
+        entry.errOffset = err.nextOffset ?? entry.errOffset + err.text.length
+      }
+      if (entry.buffer.length > 400_000) {
+        const dropped = entry.buffer.length - 300_000
+        entry.buffer = `…（输出过长，只保留最后 300k）\n${entry.buffer.slice(dropped)}`
+        entry.cursor = Math.max(0, entry.cursor - dropped)
+      }
+    } catch {
+      /* process gone */
+    }
+  }
+
+  ptyRead(sessionId, cursor = 0) {
+    const entry = this.ptys.get(sessionId)
+    if (!entry) throw new Error('终端没有打开')
+    const from = Math.max(0, Math.min(Number(cursor) || 0, entry.buffer.length))
+    return {
+      text: entry.buffer.slice(from),
+      cursor: entry.buffer.length,
+      running: entry.running,
+      shell: entry.shell,
+      mode: entry.mode,
+      pid: entry.pid ?? null,
+    }
+  }
+
+  async ptyInput(sessionId, text) {
+    const entry = this.ptys.get(sessionId)
+    if (!entry) throw new Error('终端没有打开')
+    if (entry.mode === 'pipe') {
+      // A piped shell reads lines, not keystrokes: map Enter to a newline and
+      // drop control sequences it cannot interpret.
+      const line = String(text ?? '').replace(/\r\n?/g, '\n')
+      if (/^[\u0000-\u001f]+$/.test(line.replace(/\n/g, ''))) return { ok: true, ignored: true }
+      await new Promise((resolve) => entry.handle.stdin.write(line, resolve))
+      return { ok: true, mode: 'pipe' }
+    }
+    await entry.handle.write(String(text ?? ''))
+    return { ok: true, mode: 'pty' }
+  }
+
+  async ptyResize(sessionId, cols, rows) {
+    const entry = this.ptys.get(sessionId)
+    if (!entry) throw new Error('终端没有打开')
+    const width = Math.max(20, Math.min(300, Number(cols) || entry.cols))
+    const height = Math.max(10, Math.min(120, Number(rows) || entry.rows))
+    if (entry.mode === 'pty' && typeof entry.handle.resize === 'function') {
+      await entry.handle.resize(width, height)
+    }
+    entry.cols = width
+    entry.rows = height
+    return { cols: width, rows: height }
+  }
+
+  async ptyKill(sessionId) {
+    const entry = this.ptys.get(sessionId)
+    if (!entry) return { ok: true, closed: false }
+    if (entry.timer) clearInterval(entry.timer)
+    try {
+      await entry.handle.terminate()
+    } catch {
+      /* already gone */
+    }
+    this.ptys.delete(sessionId)
+    return { ok: true, closed: true }
+  }
+
   /* --------------------------------------------------------------- goals */
 
   async goal(sessionId) {
@@ -695,6 +956,14 @@ function formatSeconds(seconds) {
 
 /** The shell every phone command runs through on this platform. */
 function resolveWindowsShell() {
+  const override = process.env.CCDSH_SHELL
+  if (override) {
+    try {
+      if (fs.existsSync(override)) return override
+    } catch {
+      /* ignore */
+    }
+  }
   if (process.platform !== 'win32') return process.env.SHELL || '/bin/sh'
   const candidates = [
     'C:\\Program Files\\PowerShell\\7\\pwsh.exe',
@@ -708,6 +977,20 @@ function resolveWindowsShell() {
     }
   }
   return 'powershell.exe'
+}
+
+/**
+ * Turn raw PTY bytes into a readable transcript: drop escape sequences, turn
+ * carriage-return overwrites into newlines and normalise line endings.
+ */
+function normalizeTerminalText(text) {
+  return String(text)
+    .replace(/\u001b\][^\u0007]*(\u0007|\u001b\\)/g, '')
+    .replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, '')
+    .replace(/\u001b[@-Z\\-_]/g, '')
+    .replace(/\u0007/g, '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
 }
 
 const NAMESPACE_TITLES = {

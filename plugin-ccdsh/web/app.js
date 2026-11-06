@@ -1217,23 +1217,45 @@ function presetSheet(close) {
 
 function approvalSheet(close) {
   const armed = state.approvals.armedUntil > Date.now()
+  const forced = Boolean(state.approvals.forced)
+  const desktop = Boolean(state.approvals.desktopAttached)
+
+  const arm = async (minutes, force) => {
+    try {
+      const result = await api('/api/approvals/arm', { method: 'POST', body: { minutes, force } })
+      state.approvals.armedUntil = result.armedUntil || 0
+      state.approvals.forced = Boolean(result.forced)
+      state.approvals.desktopAttached = Boolean(result.desktopAttached)
+      close()
+      refreshSessionMeta()
+      toast(force ? '已强制接管，电脑端可能留弹窗' : '已接管审批 30 分钟')
+    } catch (error) {
+      toast('设置失败：' + error.message)
+    }
+  }
+
   return [
     el('h2', { text: '远程审批' }),
-    el('div', { class: 'small', text: '开启后，电脑上需要你批准的工具调用会推送到手机，可以直接允许或拒绝；到期自动交还电脑。' }),
+    el('div', { class: 'small', text: '接管后，需要你批准的工具调用会推到手机，直接允许或拒绝；到期自动交还电脑。' }),
+    el('div', { class: 'small', style: 'margin-top:6px', text: desktop ? '电脑端页面在线：普通接管会把审批留给电脑，避免电脑上留下点不掉的弹窗。' : '电脑端页面不在线：接管后审批会直接出现在手机上。' }),
     el('button', {
       class: 'option',
-      onclick: async () => {
-        try {
-          const result = await api('/api/approvals/arm', { method: 'POST', body: { minutes: 30 } })
-          state.approvals.armedUntil = result.armedUntil || Date.now() + 30 * 60_000
-          close()
-          refreshSessionMeta()
-          toast('已接管审批 30 分钟')
-        } catch (error) {
-          toast('设置失败：' + error.message)
-        }
-      },
-    }, [el('div', { class: 'name', text: armed ? '延长接管 30 分钟' : '接管审批 30 分钟' })]),
+      onclick: () => arm(30, false),
+    }, [
+      el('div', { class: 'name' }, [
+        el('div', { text: armed && !forced ? '延长接管 30 分钟' : '接管审批 30 分钟' }),
+        el('div', { class: 'desc', text: '电脑端在线时由电脑处理；不在线时推到手机' }),
+      ]),
+    ]),
+    el('button', {
+      class: 'option',
+      onclick: () => arm(30, true),
+    }, [
+      el('div', { class: 'name' }, [
+        el('div', { text: armed && forced ? '延长强制接管 30 分钟' : '强制接管（人在外面时用）' }),
+        el('div', { class: 'desc', text: '即使电脑端在线也由手机决定；电脑上可能留下一个待处理的弹窗' }),
+      ]),
+    ]),
     armed
       ? el('button', {
         class: 'option',
@@ -1241,6 +1263,7 @@ function approvalSheet(close) {
           try {
             await api('/api/approvals/arm', { method: 'POST', body: { minutes: 0 } })
             state.approvals.armedUntil = 0
+            state.approvals.forced = false
             close()
             refreshSessionMeta()
             toast('已交还电脑审批')
@@ -1366,7 +1389,135 @@ function openTerminalPanel() {
   if (!guardOpen('terminal')) return null
   const sessionId = state.current?.id || ''
   const cwd = state.current?.cwd || ''
-  const view = panelShell({ title: '终端', subtitle: cwd || '逐条执行命令' })
+  const view = panelShell({ title: '终端', subtitle: '正在打开…' })
+  let cursor = 0
+  let timer = null
+  let closed = false
+  let shellName = ''
+
+  const output = el('div', { class: 'term' })
+  const input = el('input', {
+    placeholder: '输入命令，回车执行（支持交互式程序）',
+    autocomplete: 'off',
+    spellcheck: 'false',
+    onkeydown: (event) => {
+      if (event.key === 'Enter' && !event.isComposing) {
+        event.preventDefault()
+        const text = input.value
+        input.value = ''
+        send(text + '\r')
+      }
+    },
+  })
+
+  const quick = [
+    ['Ctrl-C', '\u0003'],
+    ['Tab', '\t'],
+    ['↑', '\u001b[A'],
+    ['↓', '\u001b[B'],
+    ['ls', 'ls\r'],
+    ['clear', 'clear\r'],
+    ['清屏', null],
+  ]
+
+  const wrap = el('div', { class: 'term-wrap' }, [
+    output,
+    el('div', { class: 'term-kbd' }, quick.map(([label, text]) =>
+      el('button', {
+        class: 'chip',
+        onclick: () => {
+          if (text === null) output.textContent = ''
+          else send(text)
+        },
+      }, [label]),
+    )),
+    el('div', { class: 'term-input' }, [
+      input,
+      el('button', { class: 'send', onclick: () => { const text = input.value; input.value = ''; send(text + '\r') } }, [svg(ICON.send, 17)]),
+    ]),
+  ])
+  view.body.style.display = 'flex'
+  view.body.style.flexDirection = 'column'
+  view.body.replaceChildren(wrap)
+  view.setRight([
+    el('button', { class: 'icon-btn', title: '关闭终端', onclick: kill }, [svg(ICON.stop, 16)]),
+  ])
+
+  function write(text) {
+    if (!text) return
+    output.textContent += text
+    output.scrollTop = output.scrollHeight
+  }
+
+  async function send(text) {
+    if (!text) return
+    try {
+      await api(`/api/pty/${encodeURIComponent(sessionId)}/input`, { method: 'POST', body: { text } })
+    } catch (error) {
+      write(`\n[发送失败] ${error.message}\n`)
+    }
+  }
+
+  async function poll() {
+    if (closed) return
+    try {
+      const data = await api(`/api/pty/${encodeURIComponent(sessionId)}?cursor=${cursor}`)
+      write(data.text || '')
+      cursor = data.cursor ?? cursor
+      view.setTitle(
+        data.mode === 'pty' ? '交互终端' : '持久 shell（兼容模式）',
+        data.running ? `${shellName} · 运行中` : '已退出',
+      )
+      if (!data.running) stopPolling()
+    } catch (error) {
+      view.setTitle('终端', '读取失败')
+      stopPolling()
+    }
+  }
+
+  function stopPolling() {
+    if (timer) clearInterval(timer)
+    timer = null
+  }
+
+  async function kill() {
+    try {
+      await api(`/api/pty/${encodeURIComponent(sessionId)}/kill`, { method: 'POST', body: {} })
+      toast('终端已关闭')
+    } catch (error) {
+      toast('关闭失败：' + error.message)
+    }
+    closed = true
+    stopPolling()
+    view.close()
+  }
+
+  async function start() {
+    try {
+      const opened = await api('/api/pty', { method: 'POST', body: { session: sessionId } })
+      shellName = opened.shell ? opened.shell.split(/[\\/]/).pop() : ''
+      const modeLabel = opened.mode === 'pty' ? '交互终端' : '持久 shell（兼容模式）'
+      view.setTitle(modeLabel, `${shellName} · 运行中`)
+      timer = setInterval(poll, 600)
+      await poll()
+      input.focus()
+    } catch (error) {
+      view.close()
+      toast('真终端不可用，改用命令模式：' + error.message)
+      openCommandPanel()
+    }
+  }
+
+  start()
+  return view
+}
+
+/** Fallback: one command per request (used when no PTY backend exists). */
+function openCommandPanel() {
+  if (!guardOpen('command')) return null
+  const sessionId = state.current?.id || ''
+  const cwd = state.current?.cwd || ''
+  const view = panelShell({ title: '终端（命令模式）', subtitle: cwd || '逐条执行命令' })
   let running = null // { id, cursor, timer }
   let busy = false
 
@@ -1473,8 +1624,8 @@ function openTerminalPanel() {
   }
 
   write(
-    `逐条执行命令（不是交互式 PTY），工作目录：${cwd || '会话目录'}\n` +
-      `适合跑 ls / git / npm 这类命令；需要 TUI 的程序请在电脑上操作。\n\n`,
+    `命令模式（真终端不可用时的退路）：逐条执行，工作目录 ${cwd || '会话目录'}\n` +
+      `输出是纯文本，没有交互；需要交互请让电脑上启用 subprocess 的终端能力。\n\n`,
   )
   return view
 }

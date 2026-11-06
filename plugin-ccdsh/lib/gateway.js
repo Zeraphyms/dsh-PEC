@@ -83,6 +83,12 @@ export class Gateway {
       /* ignore */
     }
     this.disposeIndex = null
+    // A PTY is a child process: never leave one behind when the plugin unloads.
+    try {
+      for (const id of [...this.dsh.ptys.keys()]) await this.dsh.ptyKill(id)
+    } catch {
+      /* ignore */
+    }
     this.approvals.dispose()
     if (this.discovery) {
       try {
@@ -372,6 +378,25 @@ export class Gateway {
       return sendJson(res, 200, this.dsh.readRun(id, url.searchParams.get('cursor') || 0))
     }
 
+    // ---- real PTY -------------------------------------------------------
+    if (pathname === '/api/pty' && req.method === 'POST') {
+      const body = await readJson(req)
+      return sendJson(res, 200, await this.dsh.ptyOpen(body.session, body))
+    }
+    if (pathname === '/api/pty' && req.method === 'GET') {
+      return sendJson(res, 200, this.dsh.ptyStatus(url.searchParams.get('session') || ''))
+    }
+    const ptyMatch = pathname.match(/^\/api\/pty\/([^/]+)(?:\/(input|resize|kill))?$/)
+    if (ptyMatch) {
+      const sessionId = decodeURIComponent(ptyMatch[1])
+      const action = ptyMatch[2] || ''
+      if (!action) return sendJson(res, 200, this.dsh.ptyRead(sessionId, url.searchParams.get('cursor') || 0))
+      const body = await readJson(req)
+      if (action === 'input') return sendJson(res, 200, await this.dsh.ptyInput(sessionId, body.text))
+      if (action === 'resize') return sendJson(res, 200, await this.dsh.ptyResize(sessionId, body.cols, body.rows))
+      if (action === 'kill') return sendJson(res, 200, await this.dsh.ptyKill(sessionId))
+    }
+
     // ---- goal + schedules ----------------------------------------------
     if (pathname === '/api/goal' && req.method === 'GET') {
       return sendJson(res, 200, await this.dsh.goal(url.searchParams.get('session') || ''))
@@ -450,7 +475,7 @@ export class Gateway {
     }
 
     if (pathname === '/api/approvals/arm' && req.method === 'POST') {      const body = await readJson(req)
-      return sendJson(res, 200, this.approvals.arm(Number(body.minutes) || 10))
+      return sendJson(res, 200, this.approvals.arm(Number(body.minutes) || 10, Boolean(body.force)))
     }
     if (pathname === '/api/approvals') return sendJson(res, 200, this.approvals.snapshot())
     const approvalMatch = pathname.match(/^\/api\/approvals\/([^/]+)$/)
