@@ -60,6 +60,9 @@ const state = {
   current: null,
   events: [],
   snapshotAt: null,
+  cursor: null,        // inclusive log cut from the opening snapshot
+  hasMore: false,      // older history available on the host
+  preserveScroll: null, // distance from the bottom to keep while prepending
   live: null,
   toolResults: new Map(),
   running: false,
@@ -488,12 +491,20 @@ function renderChat() {
     chat,
     composer,
   )
-  scrollToBottom()
+  if (state.preserveScroll != null) {
+    // Loading earlier history: hold the reader's place instead of jumping.
+    chat.scrollTop = chat.scrollHeight - state.preserveScroll
+    state.preserveScroll = null
+  } else {
+    scrollToBottom()
+  }
 }
 
 function chatRows() {
   const rows = []
   let lastAssistant = null
+
+  if (state.hasMore && state.events.length) rows.push(loadEarlierRow())
 
   for (const event of state.events) {
     if (!event || !event.type) continue
@@ -607,6 +618,56 @@ function emptyChat() {
     el('div', { class: 'empty-title', text: '开始和电脑上的 DSH 对话吧' }),
     el('div', { class: 'empty-sub', text: '消息会发到电脑上这个会话里，模型、权限都按你选好的来' }),
   ])
+}
+
+/** Backwards pagination: the pill above the oldest loaded turn. */
+function loadEarlierRow() {
+  return el('div', { class: 'row load-earlier' }, [
+    el('button', { class: 'load-earlier-btn', id: 'load-earlier', onclick: loadEarlier }, '加载更早'),
+  ])
+}
+
+/** Oldest durable seq currently rendered. */
+function earliestSeq() {
+  let min = null
+  for (const event of state.events) {
+    if (event?.seq == null) continue
+    if (min == null || event.seq < min) min = event.seq
+  }
+  return min
+}
+
+async function loadEarlier() {
+  const button = document.getElementById('load-earlier')
+  const id = state.current?.id
+  const before = earliestSeq()
+  if (!button || button.disabled || !id || !state.cursor || before == null) return
+  button.disabled = true
+  button.textContent = '加载中…'
+  const chat = document.getElementById('chat')
+  const fromBottom = chat ? chat.scrollHeight - chat.scrollTop : 0
+  try {
+    const page = await api(
+      `/api/sessions/${encodeURIComponent(id)}/history?through=${encodeURIComponent(state.cursor)}&before=${encodeURIComponent(before)}&limit=30`,
+    )
+    const known = new Set(state.events.map((event) => event.seq))
+    const older = (page.records || [])
+      .map((record) => record.event)
+      .filter((event) => event && !known.has(event.seq))
+    state.hasMore = Boolean(page.hasMore)
+    if (older.length) {
+      state.events = [...older, ...state.events]
+      state.preserveScroll = fromBottom
+      render()
+    } else {
+      render()
+      toast(state.hasMore ? '没有更多更早的消息了' : '已经到对话开头')
+    }
+  } catch (error) {
+    button.disabled = false
+    button.textContent = '加载更早'
+    toast('加载失败：' + error.message)
+  }
 }
 
 /** Shown between opening a session and its first snapshot frame. */
@@ -1095,7 +1156,16 @@ function openStream(sessionId) {
 function handleFrame(frame) {
   if (!frame || !frame.type) return
   if (frame.type === 'snapshot') {
-    state.events = (frame.records || []).map((record) => record.event).filter(Boolean)
+    const incoming = (frame.records || []).map((record) => record.event).filter(Boolean)
+    // A reconnect re-sends the newest window. Keep any older pages the user has
+    // already loaded instead of collapsing the transcript back to the tail.
+    const oldestIncoming = incoming[0]?.seq
+    const keptOlder = state.events.length > 0 && oldestIncoming != null && state.events[0]?.seq < oldestIncoming
+    state.events = keptOlder
+      ? [...state.events.filter((event) => event.seq != null && event.seq < oldestIncoming), ...incoming]
+      : incoming
+    if (Number.isFinite(frame.cursor)) state.cursor = frame.cursor
+    if (!keptOlder) state.hasMore = Boolean(frame.hasMore)
     state.snapshotAt = state.current?.id || true
     const values = frame.projections?.values || {}
     if (values.title) state.current.title = values.title
@@ -1222,6 +1292,9 @@ async function openSession(id) {
   state.current = summary ? { ...summary } : { id, title: '' }
   state.events = []
   state.snapshotAt = null
+  state.cursor = null
+  state.hasMore = false
+  state.preserveScroll = null
   state.live = null
   state.view = 'chat'
   localStorage.setItem('ccdsh_last_session', id)

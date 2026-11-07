@@ -357,6 +357,19 @@ a { color: var(--dsw-brand); text-decoration: none; }
 }
 .msg-act:active { background: var(--dsw-bg-platform); color: var(--dsw-label-secondary); }
 
+/* "Load earlier" pill above the oldest loaded turn. */
+.row.load-earlier { justify-content: center; margin-bottom: 10px; }
+.load-earlier-btn {
+  padding: 6px 16px;
+  border-radius: 999px;
+  background: var(--dsw-bg-platform);
+  color: var(--dsw-label-secondary);
+  font-size: var(--fs-meta);
+  line-height: 20px;
+}
+.load-earlier-btn:active { opacity: .75; }
+.load-earlier-btn[disabled] { opacity: .55; }
+
 /* Opening a session: a quiet line until the first snapshot arrives. */
 .chat-loading {
   height: 100%;
