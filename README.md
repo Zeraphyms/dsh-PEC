@@ -15,6 +15,16 @@
 
 ---
 
+## 界面
+
+<p>
+  <img src="assets/screenshots/sessions.png" width="240" alt="会话列表" />
+  <img src="assets/screenshots/chat.png" width="240" alt="对话（浅色）" />
+  <img src="assets/screenshots/chat-dark.png" width="240" alt="对话（深色）" />
+</p>
+
+主题跟随 DSH「设置 → 通用 → 外观 / 字体大小」，浅色与深色都是同一套设计令牌。
+
 ## 特性
 
 | 能力 | 说明 |
