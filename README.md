@@ -1,10 +1,10 @@
-# cc-dsh
+# dsh-PEC
 
 在手机上操控电脑上的 **DeepSeek Harness（DSH）**。
 
 它由两部分组成：
 
-- **cc-dsh 插件**：跑在电脑的 DSH 进程里，提供带鉴权的手机网关 + 一个手机版网页界面；
+- **dsh-PEC 插件**（包名仍是 `cc-dsh`）：跑在电脑的 DSH 进程里，提供带鉴权的手机网关 + 一个手机版网页界面；
 - **cc-dsh APK**：约 25 KB 的原生外壳，只负责配对、保存信任、承载界面。
 
 返回手势：面板 → 会话 → 列表逐层返回，**只有回到会话列表时**按返回/侧滑才会询问是否退出，不会在聊天里误弹退出框。
@@ -57,7 +57,7 @@
 ## 目录结构
 
 ```
-plugin-ccdsh/           DSH 插件（Host + 一个设置页 Client 模块）
+（本仓库根目录就是插件本体）
   index.js              入口：启动网关、注册清理
   lib/gateway.js        HTTP 路由 / SSE / 鉴权 / 局域网发现 / 静态资源
   lib/state.js          设备令牌、配对码（内存）、原子持久化
@@ -65,6 +65,7 @@ plugin-ccdsh/           DSH 插件（Host + 一个设置页 Client 模块）
   lib/approvals.js      审批接管
   web/                  手机界面（无构建步骤的 HTML/CSS/JS）
   client.js             DSH「设置 → 手机连接」面板
+  cordis.patch.yml      dsh.bundle 清单
 android-shell/          Android 外壳（原生 Java，无 Gradle）
   app/src/main/...      WebView、配对、SSL 固定、文件选择、下载
   build-apk.ps1         直接调用 aapt2 / javac / d8 / apksigner 的构建脚本
@@ -73,7 +74,7 @@ docs/tailscale.md       电脑版 + 手机版 Tailscale 安装与使用
 
 ## 下载与安装
 
-到 [**Releases**](https://github.com/huajikano/cc-dsh/releases) 下载两个文件：
+到 [**Releases**](https://github.com/huajikano/dsh-PEC/releases) 下载两个文件：
 
 | 文件 | 用途 |
 | --- | --- |
@@ -91,10 +92,11 @@ docs/tailscale.md       电脑版 + 手机版 Tailscale 安装与使用
 
 ### 1. 安装插件
 
-把 `plugin-ccdsh` 目录装进当前 profile（任选其一）：
+三种方式任选其一：
 
-- 用 DSH 的插件管理界面「安装本地目录」，选中 `plugin-ccdsh`；
-- 或用 `plugin_manager` 工具：`install_bundle`，target 指向该目录的绝对路径。
+- `dsh plugin add huajikano/dsh-PEC`（仓库根目录就是插件包，`package.json` 里带 `dsh.bundle` 清单）；
+- 下载 Release 里的 `cc-dsh-plugin-<版本>.zip`，解压得到 `plugin-ccdsh/`，用插件管理界面「安装本地目录」选中它；
+- 直接用 `plugin_manager` 工具的 `install_bundle`，target 指向该目录的绝对路径。
 
 安装后插件会监听 `0.0.0.0:7317`（端口被占用时自动换随机端口，日志里会打印实际地址）。
 
@@ -153,7 +155,7 @@ curl.exe -sS http://127.0.0.1:7317/api/health
 
 ## 第三方组件
 
-- [xterm.js](https://xtermjs.org/) 5.5.0 与 `@xterm/addon-fit` 0.10.0（MIT），随插件放在 `plugin-ccdsh/web/vendor/`，许可证一并附带。
+- [xterm.js](https://xtermjs.org/) 5.5.0 与 `@xterm/addon-fit` 0.10.0（MIT），随插件放在 `web/vendor/`，许可证一并附带。
 
 ## 自行构建
 
