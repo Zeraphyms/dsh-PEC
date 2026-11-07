@@ -596,8 +596,8 @@ a { color: var(--dsw-brand); text-decoration: none; }
   transition: opacity var(--ds-transition-duration-fast, .1s) ease, transform .1s ease;
 }
 .send:active { transform: scale(0.94); }
-.send.stop { background: var(--dsw-label-primary); color: var(--dsw-bg-base); }
 .send.idle { background: var(--dsw-bg-platform); color: var(--dsw-label-tertiary); }
+.send.stop { background: var(--dsw-label-primary); color: var(--dsw-bg-base); }
 .send[disabled] { opacity: .35; }
 
 /* ---------------------------------------------------------------- sheets */
