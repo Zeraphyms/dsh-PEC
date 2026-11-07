@@ -905,3 +905,19 @@ a { color: var(--dsw-brand); text-decoration: none; }
   padding: 6px 8px 6px 12px;
 }
 .composer textarea { flex: 1; resize: none; border: 0; outline: none; background: none; max-height: 140px; padding: 6px 0; }
+
+/* ------------------------------------------------- blank-session cleanup */
+.cleanup-link {
+  margin: 4px 2px 16px;
+  padding: 10px 14px;
+  border: 1px dashed var(--dsw-border-l3);
+  border-radius: var(--radius-md, 10px);
+  background: transparent;
+  color: var(--dsw-label-secondary);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  opacity: 0.85;
+  width: calc(100% - 4px);
+}
+.cleanup-link:active { opacity: 1; }

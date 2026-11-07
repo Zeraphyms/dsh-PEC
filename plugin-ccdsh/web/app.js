@@ -64,6 +64,7 @@ const state = {
   running: false,
   stream: null,
   approvals: { pending: [], armedUntil: 0 },
+  archivedIds: [],
   filter: '',
   loading: true,
   error: '',
@@ -235,6 +236,7 @@ async function boot() {
     state.permissions = bootstrap.permissions || { options: [] }
     state.plugins = Array.isArray(bootstrap.plugins) ? bootstrap.plugins : []
     state.approvals = bootstrap.approvals || { pending: [], armedUntil: 0 }
+    state.archivedIds = bootstrap.sessions?.archivedSessionIds || state.archivedIds || []
     // Compatibility self-check: the plugin reports which Host capabilities the
     // running DSH still offers, so a Harness update is visible in the UI.
     try {
@@ -360,12 +362,30 @@ function topbar(title, subtitle, { back = false, right = [] } = {}) {
 
 /* ------------------------------------------------------------------ sessions */
 
+/**
+ * Mirror the desktop's visibility rule (dsh-client-ui-workspace `sessionVisible`):
+ * subagent rows and archived rows are hidden, and blank sessions are hidden
+ * unless one is the session currently open - the desktop shows at most that one
+ * as the "New Session" placeholder. Without this, every never-used session the
+ * phone (or the desktop) minted stays visible here as a ghost row the desktop
+ * never shows.
+ */
+function visibleSessions(sessions) {
+  const archived = new Set(state.archivedIds || [])
+  return sessions.filter((session) => {
+    if (session.origin === 'subagent') return false
+    if (session.blank && session.id !== state.current?.id) return false
+    return !archived.has(String(session.id))
+  })
+}
+
 function renderSessions() {
   const query = state.filter.trim().toLowerCase()
-  const sessions = state.sessions.filter((session) => {
+  const sessions = visibleSessions(state.sessions).filter((session) => {
     if (!query) return true
     return (session.title || '') .toLowerCase().includes(query) || (session.cwd || '').toLowerCase().includes(query)
   })
+  const hiddenBlanks = state.sessions.filter((session) => session.blank && session.id !== state.current?.id).length
 
   const list = el('div', { class: 'list' }, [
     ...(state.health && !state.health.ok ? [healthBanner(state.health)] : []),
@@ -383,6 +403,12 @@ function renderSessions() {
     ...(sessions.length === 0
       ? [el('div', { class: 'empty', text: query ? '没有匹配的会话' : '还没有会话，点右下角新建一个' })]
       : sessions.map(sessionRow)),
+    ...(hiddenBlanks >= 5
+      ? [el('button', {
+          class: 'cleanup-link',
+          onclick: cleanupBlanks,
+        }, `清理 ${hiddenBlanks} 个空会话（从未发过消息，桌面端不显示）`)]
+      : []),
   ])
 
   // Replace, never append: this view re-renders on every keystroke and on the
@@ -1136,6 +1162,44 @@ async function openSession(id) {
   openStream(id)
 }
 
+/**
+ * Archive every blank session the list hides. Archiving (not deleting) matches
+ * the desktop: the rows disappear from both surfaces, stay recoverable through
+ * the desktop's archived filter, and never touch sessions with real content.
+ * Two taps instead of confirm(): the APK's WebChromeClient does not implement
+ * onJsConfirm, so window.confirm would silently cancel there.
+ */
+let cleanupArmed = 0
+async function cleanupBlanks(event) {
+  const button = event?.currentTarget
+  const targets = state.sessions.filter(
+    (session) => session.blank && session.id !== state.current?.id && session.origin !== 'subagent',
+  )
+  if (!targets.length) return
+  if (!button || Date.now() > cleanupArmed) {
+    cleanupArmed = Date.now() + 4000
+    if (button) {
+      button.textContent = `再点一次确认清理 ${targets.length} 个空会话`
+      setTimeout(() => {
+        if (button.isConnected) button.textContent = `清理 ${targets.length} 个空会话（从未发过消息，桌面端不显示）`
+      }, 4000)
+    }
+    return
+  }
+  cleanupArmed = 0
+  let ok = 0
+  for (const session of targets) {
+    try {
+      await api(`/api/sessions/${encodeURIComponent(session.id)}/archive`, { method: 'POST', body: {} })
+      ok += 1
+    } catch {
+      /* keep going; the failed row simply stays */
+    }
+  }
+  toast(`已清理 ${ok}/${targets.length} 个空会话`)
+  await refreshAll()
+}
+
 async function archiveCurrent() {
   const session = state.current
   if (!session) return
@@ -1284,6 +1348,7 @@ async function refreshAll() {
   try {
     const bootstrap = await api('/api/bootstrap')
     state.sessions = bootstrap.sessions?.items || state.sessions
+    state.archivedIds = bootstrap.sessions?.archivedSessionIds || state.archivedIds
     state.models = bootstrap.models?.groups ? bootstrap.models : state.models
     state.presets = Array.isArray(bootstrap.presets) ? bootstrap.presets : state.presets
     state.workspaces = Array.isArray(bootstrap.workspaces) ? bootstrap.workspaces : state.workspaces

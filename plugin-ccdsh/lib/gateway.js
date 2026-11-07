@@ -546,6 +546,12 @@ export class Gateway {
       return sendJson(res, 200, await this.dsh.updateSettings(decodeURIComponent(settingsMatch[1]), body.patch || {}, body.revision))
     }
 
+    if (pathname === '/api/sessions' && req.method === 'GET') {
+      // Metadata only (no rows): the archived set lets the phone mirror the
+      // desktop's hidden-archive behaviour between full bootstraps.
+      return sendJson(res, 200, { archivedSessionIds: await this.dsh.archivedIds() })
+    }
+
     if (pathname === '/api/sessions' && req.method === 'POST') {
       const body = await readJson(req)
       return sendJson(res, 200, await this.dsh.createSession(body))

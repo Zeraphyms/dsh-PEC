@@ -96,6 +96,7 @@ export class Dsh {
       items: (value?.items || [])
         .filter((item) => item?.origin !== 'subagent' && !archived.has(String(item?.sessionId)))
         .map((item) => this.#summarize(item)),
+      archivedSessionIds: [...archived],
     }
   }
 
@@ -106,6 +107,11 @@ export class Dsh {
     } catch {
       return new Set()
     }
+  }
+
+  /** The registry's archive set as an array, for clients that mirror the desktop's hidden-archive behaviour. */
+  archivedIds() {
+    return [...this.#archivedIds()]
   }
 
   #summarize(item) {
