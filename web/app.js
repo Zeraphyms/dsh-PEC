@@ -59,6 +59,7 @@ const state = {
   view: 'sessions',
   current: null,
   events: [],
+  snapshotAt: null,
   live: null,
   toolResults: new Map(),
   running: false,
@@ -470,7 +471,11 @@ function renderChat() {
   const title = session.title || '未命名会话'
   const meta = [session.running ? '运行中' : '空闲', modelLabel()].filter(Boolean).join(' · ')
 
-  const chat = el('div', { class: 'chat', id: 'chat' }, chatRows())
+  // Until the opening snapshot lands there is nothing truthful to show: paint a
+  // quiet loading line instead of an empty transcript, so the session opens
+  // directly at the bottom instead of flashing the top of the conversation.
+  const body = state.snapshotAt ? chatRows() : [chatLoading()]
+  const chat = el('div', { class: 'chat', id: 'chat' }, body)
   const composer = composerNode()
   const approval = approvalStrip()
 
@@ -601,6 +606,14 @@ function emptyChat() {
     brandMark(),
     el('div', { class: 'empty-title', text: '开始和电脑上的 DSH 对话吧' }),
     el('div', { class: 'empty-sub', text: '消息会发到电脑上这个会话里，模型、权限都按你选好的来' }),
+  ])
+}
+
+/** Shown between opening a session and its first snapshot frame. */
+function chatLoading() {
+  return el('div', { class: 'chat-loading' }, [
+    el('div', { class: 'spinner' }),
+    el('div', { text: '正在读取会话…' }),
   ])
 }
 
@@ -1025,9 +1038,14 @@ async function answerApproval(id, decision) {
 }
 
 function scrollToBottom() {
+  // Land at the bottom before the first paint, then once more after layout
+  // settles (fonts, images). `.chat` is scroll-behavior:auto, so neither call
+  // animates - opening a session no longer slides down the transcript.
+  const chat = document.getElementById('chat')
+  if (chat) chat.scrollTop = chat.scrollHeight
   requestAnimationFrame(() => {
-    const chat = document.getElementById('chat')
-    if (chat) chat.scrollTop = chat.scrollHeight
+    const again = document.getElementById('chat')
+    if (again) again.scrollTop = again.scrollHeight
   })
 }
 
@@ -1078,6 +1096,7 @@ function handleFrame(frame) {
   if (!frame || !frame.type) return
   if (frame.type === 'snapshot') {
     state.events = (frame.records || []).map((record) => record.event).filter(Boolean)
+    state.snapshotAt = state.current?.id || true
     const values = frame.projections?.values || {}
     if (values.title) state.current.title = values.title
     if (frame.header?.agentPreset) state.current.agentPreset = frame.header.agentPreset
@@ -1202,6 +1221,7 @@ async function openSession(id) {
   const summary = state.sessions.find((session) => session.id === id)
   state.current = summary ? { ...summary } : { id, title: '' }
   state.events = []
+  state.snapshotAt = null
   state.live = null
   state.view = 'chat'
   localStorage.setItem('ccdsh_last_session', id)

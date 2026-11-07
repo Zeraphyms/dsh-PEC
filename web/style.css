@@ -313,7 +313,9 @@ a { color: var(--dsw-brand); text-decoration: none; }
   flex: 1;
   overflow-y: auto;
   padding: 16px 16px 8px;
-  scroll-behavior: smooth;
+  /* Jump, never animate: opening a session must land at the bottom in the
+     first painted frame instead of sliding down through the transcript. */
+  scroll-behavior: auto;
   -webkit-overflow-scrolling: touch;
 }
 
@@ -354,6 +356,18 @@ a { color: var(--dsw-brand); text-decoration: none; }
   color: var(--dsw-label-tertiary);
 }
 .msg-act:active { background: var(--dsw-bg-platform); color: var(--dsw-label-secondary); }
+
+/* Opening a session: a quiet line until the first snapshot arrives. */
+.chat-loading {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--dsw-label-tertiary);
+  font-size: var(--fs-meta);
+}
 
 /* Empty transcript. */
 .chat-empty {
