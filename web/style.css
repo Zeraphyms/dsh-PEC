@@ -347,6 +347,24 @@ a { color: var(--dsw-brand); text-decoration: none; }
 .row.assistant .bubble { color: var(--dsw-label-primary); }
 .col { display: flex; flex-direction: column; min-width: 0; max-width: 100%; }
 
+/* Images the user sent, shown inside their bubble as proof they went through. */
+.msg-image {
+  display: block;
+  max-width: 100%;
+  max-height: 260px;
+  border-radius: var(--radius-md);
+  margin: 2px 0 6px;
+  background: var(--dsw-bg-platform);
+  object-fit: cover;
+}
+
+/* Wall-clock time for the turn that produced the answer above. */
+.turn-meta {
+  font-size: var(--fs-caption);
+  color: var(--dsw-label-tertiary);
+  margin-bottom: 6px;
+}
+
 /* Answer actions: copy, read aloud — small and quiet, like the desktop row. */
 .msg-actions { display: flex; align-items: center; gap: 4px; margin-top: 6px; margin-left: -6px; }
 .msg-act {

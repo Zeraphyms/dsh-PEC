@@ -498,11 +498,22 @@ function renderChat() {
   } else {
     scrollToBottom()
   }
+  // A re-render replaces the textarea; put the caret back where the user had it.
+  if (state.composerFocus) {
+    const field = app.querySelector('.composer-card textarea')
+    if (field) {
+      field.focus({ preventScroll: true })
+      const end = field.value.length
+      try { field.setSelectionRange(end, end) } catch { /* not selectable */ }
+    }
+  }
 }
 
 function chatRows() {
   const rows = []
   let lastAssistant = null
+  let turnStartedAt = null
+  let lastAssistantColumn = null
 
   if (state.hasMore && state.events.length) rows.push(loadEarlierRow())
 
@@ -511,10 +522,27 @@ function chatRows() {
     // Only append-origin surface events belong in the transcript; runtime
     // context and tool-addition rows are model-facing bookkeeping.
     if (event.surfaceOp && event.surfaceOp !== 'append') continue
+    if (event.type === 'turn/start') {
+      turnStartedAt = event.time || null
+      lastAssistantColumn = null
+      continue
+    }
     if (event.type === 'user/message') {
       if (event.data?.source?.kind !== 'user') continue
+      const content = Array.isArray(event.data?.content) ? event.data.content : []
       const text = textOf(event.data?.content)
-      if (text) rows.push(el('div', { class: 'row user' }, [el('div', { class: 'bubble', text })]))
+      const images = content.filter((block) => block?.type === 'image' && block.attachment?.attachmentId)
+      if (!text && images.length === 0) continue
+      rows.push(el('div', { class: 'row user' }, [
+        el('div', { class: 'bubble' }, [
+          ...images.map((block) => el('img', {
+            class: 'msg-image',
+            src: `/api/attachments/${encodeURIComponent(block.attachment.attachmentId)}`,
+            alt: '图片',
+          })),
+          text ? el('div', { text }) : null,
+        ]),
+      ]))
       continue
     }
     if (event.type === 'assistant/message') {
@@ -526,12 +554,10 @@ function chatRows() {
         reasoning ? reasoningNode(reasoning) : null,
         text ? el('div', { class: 'md' }, [renderMarkdown(text)]) : null,
       ])
-      rows.push(
-        el('div', { class: 'row assistant' }, [
-          el('div', { class: 'col' }, [bubble, text ? messageActions(text) : null]),
-        ]),
-      )
+      const column = el('div', { class: 'col' }, [bubble, text ? messageActions(text) : null])
+      rows.push(el('div', { class: 'row assistant' }, [column]))
       lastAssistant = bubble
+      lastAssistantColumn = column
       continue
     }
     if (event.type === 'tool/call') {
@@ -550,6 +576,19 @@ function chatRows() {
     }
     if (event.type === 'turn/end' && event.data?.reason?.kind === 'aborted') {
       rows.push(el('div', { class: 'row note' }, [el('div', { class: 'note-pill', text: '已停止' })]))
+    }
+    if (event.type === 'turn/end') {
+      // Duration belongs to the turn, so it goes above the answer it produced.
+      if (turnStartedAt && event.time && event.time >= turnStartedAt) {
+        const label = elapsedLabel(event.time - turnStartedAt)
+        if (lastAssistantColumn) {
+          lastAssistantColumn.prepend(el('div', { class: 'turn-meta', text: `本轮用时 ${label}` }))
+        } else {
+          rows.push(el('div', { class: 'row note' }, [el('div', { class: 'note-pill', text: `本轮用时 ${label}` })]))
+        }
+      }
+      turnStartedAt = null
+      lastAssistantColumn = null
     }
   }
 
@@ -571,6 +610,16 @@ function chatRows() {
 
   if (rows.length === 0) rows.push(emptyChat())
   return rows
+}
+
+/** "12 秒" / "3 分 05 秒" / "1 小时 02 分" for a turn's wall-clock time. */
+function elapsedLabel(milliseconds) {
+  const total = Math.max(0, Math.round(milliseconds / 1000))
+  const minutes = Math.floor(total / 60)
+  const hours = Math.floor(minutes / 60)
+  if (hours > 0) return `${hours} 小时 ${String(minutes % 60).padStart(2, '0')} 分`
+  if (minutes > 0) return `${minutes} 分 ${String(total % 60).padStart(2, '0')} 秒`
+  return `${total} 秒`
 }
 
 /** Copy / read-aloud under an answer, like the desktop transcript's actions. */
@@ -848,21 +897,75 @@ function reasoningOf(content) {
     .join('\n')
 }
 
+/* ------------------------------------------------------------- composer draft */
+
+/**
+ * Unsent text and picked images belong to the session, not to the DOM node:
+ * the transcript re-renders on every event, and leaving the chat must not throw
+ * away what was typed. Text also survives a reload through localStorage.
+ */
+const DRAFTS = new Map()
+
+function draftKey(sessionId) {
+  return sessionId || 'new'
+}
+
+function draftFor(sessionId) {
+  const key = draftKey(sessionId)
+  let draft = DRAFTS.get(key)
+  if (!draft) {
+    draft = { text: '', images: [] }
+    try {
+      draft.text = localStorage.getItem(`ccdsh_draft_${key}`) || ''
+    } catch { /* private mode */ }
+    DRAFTS.set(key, draft)
+  }
+  return draft
+}
+
+function saveDraftText(sessionId, text) {
+  const draft = draftFor(sessionId)
+  draft.text = text
+  try {
+    if (text) localStorage.setItem(`ccdsh_draft_${draftKey(sessionId)}`, text)
+    else localStorage.removeItem(`ccdsh_draft_${draftKey(sessionId)}`)
+  } catch { /* private mode */ }
+}
+
+function clearDraft(sessionId) {
+  const draft = draftFor(sessionId)
+  draft.text = ''
+  draft.images = []
+  try {
+    localStorage.removeItem(`ccdsh_draft_${draftKey(sessionId)}`)
+  } catch { /* private mode */ }
+}
+
 function composerNode() {
+  const sessionId = state.current?.id
+  const draft = draftFor(sessionId)
   const input = el('textarea', {
     rows: '1',
     placeholder: state.current?.running ? '继续追加指令…' : '发给电脑上的 DSH…',
     oninput: (event) => {
       event.target.style.height = 'auto'
       event.target.style.height = Math.min(event.target.scrollHeight, 140) + 'px'
+      saveDraftText(sessionId, event.target.value)
       button.classList.toggle('idle', idle())
     },
+    onfocus: () => { state.composerFocus = true },
+    onblur: () => { state.composerFocus = false },
     onkeydown: (event) => {
       if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
         event.preventDefault()
         send()
       }
     },
+  })
+  input.value = draft.text
+  queueMicrotask(() => {
+    input.style.height = 'auto'
+    input.style.height = Math.min(input.scrollHeight, 140) + 'px'
   })
 
   const picker = el('input', {
@@ -883,16 +986,16 @@ function composerNode() {
   const attachRow = el('div', { class: 'attach-row', id: 'attach-row' })
 
   function renderAttachments() {
-    const draft = state.draft || []
+    const images = draft.images
     attachRow.replaceChildren(
-      ...draft.map((item, index) =>
+      ...images.map((item, index) =>
         el('div', { class: 'attach' }, [
           el('img', { src: item.preview }),
-          el('button', { class: 'x', onclick: () => { draft.splice(index, 1); renderAttachments() } }, '×'),
+          el('button', { class: 'x', onclick: () => { images.splice(index, 1); renderAttachments() } }, '×'),
         ]),
       ),
     )
-    attachRow.style.display = draft.length ? 'flex' : 'none'
+    attachRow.style.display = images.length ? 'flex' : 'none'
     button.classList.toggle('idle', idle())
   }
 
@@ -914,13 +1017,12 @@ function composerNode() {
       })
       const [meta, base64] = dataUrl.split(',')
       const mediaType = (meta.match(/data:([^;]+)/) || [])[1] || file.type
-      state.draft = state.draft || []
-      state.draft.push({ mediaType, data: base64, name: file.name, preview: dataUrl })
+      draft.images.push({ mediaType, data: base64, name: file.name, preview: dataUrl })
     }
     renderAttachments()
   }
 
-  const idle = () => !state.current?.running && !input.value.trim() && !(state.draft || []).length
+  const idle = () => !state.current?.running && !input.value.trim() && !draft.images.length
   const button = el('button', {
     class: `send${state.current?.running ? ' stop' : ''}${idle() ? ' idle' : ''}`,
     onclick: () => (state.current?.running ? stop() : send()),
@@ -928,11 +1030,11 @@ function composerNode() {
 
   async function send() {
     const text = input.value.trim()
-    const images = (state.draft || []).map(({ mediaType, data }) => ({ type: 'image', mediaType, data }))
+    const images = draft.images.map(({ mediaType, data }) => ({ type: 'image', mediaType, data }))
     if (!text && images.length === 0) return
     input.value = ''
     input.style.height = 'auto'
-    state.draft = []
+    clearDraft(sessionId)
     renderAttachments()
     button.classList.toggle('idle', idle())
     try {
@@ -945,6 +1047,7 @@ function composerNode() {
     } catch (error) {
       toast('发送失败：' + error.message)
       input.value = text
+      saveDraftText(sessionId, text)
     }
   }
 
