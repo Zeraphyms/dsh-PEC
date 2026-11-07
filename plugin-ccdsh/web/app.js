@@ -1088,6 +1088,16 @@ function handleFrame(frame) {
     const headerEvent = [...state.events].reverse().find((event) => event.type === 'request/header')
     const config = headerEvent?.data?.header?.config
     if (config?.provider && config?.model) state.current.model = { provider: config.provider, model: config.model }
+    // Host-authoritative model selection: the modelSelection projection outranks
+    // history scraping. The projection is absent from the list summary (cold
+    // sessions ship an empty values map), so without this the header falls back
+    // to the global default and shows the wrong model until a turn happens.
+    const selection = values.modelSelection?.next || values.modelSelection?.lastUsed
+    if (selection?.provider && selection?.model) {
+      state.current.model = { provider: selection.provider, model: selection.model, ...(selection.reasoningEffort ? { reasoningEffort: selection.reasoningEffort } : {}) }
+    } else if (config?.provider && config?.model) {
+      state.current.model = { provider: config.provider, model: config.model, ...(config.reasoningEffort ? { reasoningEffort: String(config.reasoningEffort) } : {}) }
+    }
     state.live = null
     // Host-authoritative truth: a snapshot arrives on open and on every SSE
     // reconnect, so it is the one place a stale local "running" heals itself.
@@ -1197,6 +1207,24 @@ async function openSession(id) {
   localStorage.setItem('ccdsh_last_session', id)
   render()
   openStream(id)
+  // Cold summaries carry no modelSelection projection: fetch the Host's
+  // authoritative selection so the header shows the real model immediately,
+  // even before (or without) the first snapshot frame.
+  try {
+    const result = await api(`/api/sessions/${encodeURIComponent(id)}/model`)
+    const selection = result?.selection
+    if (selection?.provider && selection?.model && state.current?.id === id) {
+      state.current.model = {
+        provider: selection.provider,
+        model: selection.model,
+        ...(selection.reasoningEffort ? { reasoningEffort: selection.reasoningEffort } : {}),
+      }
+      refreshSessionMeta()
+      if (state.view === 'chat') render()
+    }
+  } catch {
+    /* lib layer may predate this endpoint; the snapshot frame still corrects */
+  }
 }
 
 /**
@@ -1538,10 +1566,16 @@ function modelSheet(close) {
     for (const model of group.models) {
       const selected = selection && selection.model === model.id
       const efforts = model.reasoning?.efforts || []
+      // Tapping the model itself picks the highest effort tier when the model
+      // has one: an unselected effort would otherwise fall through to the
+      // protocol default (often no reasoning), which surprises people.
+      const highestEffort = efforts.length
+        ? (efforts[efforts.length - 1].id || efforts[efforts.length - 1].value || efforts[efforts.length - 1])
+        : undefined
       rows.push(
         el('button', {
           class: `option${selected ? ' sel' : ''}`,
-          onclick: () => apply(group.id, model.id),
+          onclick: () => apply(group.id, model.id, selected ? selection.reasoningEffort : highestEffort),
         }, [
           el('div', { class: 'name' }, [
             el('div', { text: model.name }),

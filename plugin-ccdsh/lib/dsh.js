@@ -555,6 +555,34 @@ export class Dsh {
     return this.page(sessionId, url)
   }
 
+  /**
+   * The session's authoritative model selection (the Host's modelSelection
+   * projection). Cold list summaries ship an empty projection map, so the phone
+   * cannot learn the current model from /api/bootstrap — this reads the live
+   * projection through one aborted follow snapshot instead.
+   */
+  async modelSelection(sessionId) {
+    const controller = this.#svc('sessionController')
+    if (!controller) throw new Error('sessionController unavailable')
+    const abort = new AbortController()
+    try {
+      // maxMessages: 1 mirrors page(): without it the follow materializes a
+      // full scope and cold sessions fail with the preset's model guard.
+      for await (const frame of controller.follow(
+        { address: { kind: 'session', sessionId }, maxMessages: 1 },
+        abort.signal,
+      )) {
+        if (frame?.type === 'snapshot') {
+          const selection = frame.projections?.values?.modelSelection
+          return selection?.next || selection?.lastUsed || null
+        }
+      }
+    } finally {
+      abort.abort()
+    }
+    return null
+  }
+
   /* ---------------------------------------------------------------- files */
 
   #agent(sessionId) {

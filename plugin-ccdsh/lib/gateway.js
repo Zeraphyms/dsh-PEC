@@ -572,6 +572,12 @@ export class Gateway {
         return sendJson(res, 200, await this.dsh.rename(sessionId, body.title))
       }
       if (action === 'model') {
+        if (req.method === 'GET') {
+          // Authoritative current selection for the phone header; cold summaries
+          // carry no projection, so the UI would otherwise fall back to the
+          // global default and show a stale model.
+          return sendJson(res, 200, { selection: await this.dsh.modelSelection(sessionId) })
+        }
         const body = await readJson(req)
         return sendJson(res, 200, await this.dsh.selectModel(sessionId, body))
       }
