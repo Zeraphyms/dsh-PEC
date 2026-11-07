@@ -878,6 +878,25 @@ function composerNode() {
     try {
       await api(`/api/sessions/${encodeURIComponent(state.current.id)}/cancel`, { method: 'POST', body: {} })
       toast('已请求停止')
+      // Don't trust the toast: poll the Host briefly until it reports the turn
+      // over (or give up and let the next snapshot correct us). A cancelled
+      // long answer used to leave the phone showing "running" forever when the
+      // turn/end frame got lost across an SSE reconnect.
+      for (let attempt = 0; attempt < 10; attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, 1200))
+        try {
+          const page = await api(`/api/sessions/${encodeURIComponent(state.current.id)}?limit=1`)
+          const events = (page.records || []).map((record) => record.event).filter(Boolean)
+          const last = [...events].reverse().find((event) => event.type === 'turn/end' || event.type === 'turn/start')
+          if (last && last.type === 'turn/end') {
+            state.current.running = false
+            syncRunningUi()
+            return
+          }
+        } catch {
+          return // offline: the reconnect snapshot will correct the state
+        }
+      }
     } catch (error) {
       toast('停止失败：' + error.message)
     }
@@ -946,12 +965,20 @@ function modelLabel() {
 }
 
 function refreshSessionMeta() {
-  const sub = document.querySelector('.topbar .sub')
-  if (sub) sub.textContent = [state.current?.running ? '运行中' : '空闲', modelLabel()].filter(Boolean).join(' · ')
+  syncRunningUi()
   const hints = document.getElementById('hints')
   if (hints) hints.replaceChildren(...hintChips())
+}
+
+/** Push the current running flag into the composer chrome (stop/send button, header). */
+function syncRunningUi() {
+  const sub = document.querySelector('.topbar .sub')
+  if (sub) sub.textContent = [state.current?.running ? '运行中' : '空闲', modelLabel()].filter(Boolean).join(' · ')
   const button = document.querySelector('.send')
-  if (button) button.replaceChildren(svg(state.current?.running ? ICON.stop : ICON.send, 19))
+  if (button) {
+    button.classList.toggle('stop', Boolean(state.current?.running))
+    button.replaceChildren(svg(state.current?.running ? ICON.stop : ICON.send, 19))
+  }
 }
 
 function approvalStrip() {
@@ -1040,6 +1067,11 @@ function openStream(sessionId) {
   stream.addEventListener('error', () => {
     // EventSource retries on its own; the snapshot resets state on reconnect.
   })
+  stream.addEventListener('end', () => {
+    // The Host closed the follow (idle timeout, upstream hiccup). EventSource
+    // does not always reconnect after a clean server close: force one.
+    if (state.view === 'chat' && state.current?.id === sessionId) openStream(sessionId)
+  })
 }
 
 function handleFrame(frame) {
@@ -1057,7 +1089,12 @@ function handleFrame(frame) {
     const config = headerEvent?.data?.header?.config
     if (config?.provider && config?.model) state.current.model = { provider: config.provider, model: config.model }
     state.live = null
-    state.running = Boolean(state.current?.running)
+    // Host-authoritative truth: a snapshot arrives on open and on every SSE
+    // reconnect, so it is the one place a stale local "running" heals itself.
+    // The last turn/end in the window outranks a stale summary row.
+    const lastTurnEnd = [...state.events].reverse().find((event) => event.type === 'turn/end' || event.type === 'turn/start')
+    state.current.running = lastTurnEnd ? lastTurnEnd.type === 'turn/start' : Boolean(state.current.running)
+    syncRunningUi()
     if (state.view === 'chat') render()
     return
   }
@@ -2584,6 +2621,22 @@ setInterval(() => {
         state.sessions = bootstrap.sessions?.items || state.sessions
         state.approvals = bootstrap.approvals || state.approvals
         if (state.view === 'sessions') renderSessions()
+      })
+      .catch(() => {})
+  }
+  if (state.view === 'chat' && state.current && !document.hidden && !state.live) {
+    // Self-heal a "running" flag wedged by a lost turn/end frame (SSE reconnect
+    // during a long answer): the Host's last turn boundary is the truth.
+    api(`/api/sessions/${encodeURIComponent(state.current.id)}?limit=3`)
+      .then((page) => {
+        const events = (page.records || []).map((record) => record.event).filter(Boolean)
+        const last = [...events].reverse().find((event) => event.type === 'turn/end' || event.type === 'turn/start')
+        if (!last && state.current.running && events.some((event) => event.type === 'assistant/message')) {
+          state.current.running = false // window ends after the settlement: turn is over
+        } else if (last) {
+          state.current.running = last.type === 'turn/start'
+        }
+        syncRunningUi()
       })
       .catch(() => {})
   }
