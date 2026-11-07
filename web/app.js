@@ -1227,6 +1227,14 @@ async function openSession(id) {
   localStorage.setItem('ccdsh_last_session', id)
   render()
   openStream(id)
+  // If the stream never delivers its snapshot (offline, host hiccup), fall back
+  // to the ordinary empty transcript instead of loading forever.
+  setTimeout(() => {
+    if (!state.snapshotAt && state.view === 'chat' && state.current?.id === id) {
+      state.snapshotAt = 'timeout'
+      render()
+    }
+  }, 4000)
   // Cold summaries carry no modelSelection projection: fetch the Host's
   // authoritative selection so the header shows the real model immediately,
   // even before (or without) the first snapshot frame.
