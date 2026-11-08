@@ -269,7 +269,7 @@ function renderError(error) {
     el('div', { class: 'pair' }, [
       el('h1', { text: '连不上电脑' }),
       el('p', { text: String(error?.message || error) }),
-      el('div', { class: 'err', text: '确认电脑上的 DSH 正在运行，且 cc-dsh 插件已启用。' }),
+      el('div', { class: 'err', text: '确认电脑上的 DSH 正在运行，且 dsh-PEC 插件已启用。' }),
       el('button', { class: 'btn', onclick: () => location.reload() }, '重试'),
       el(
         'button',

@@ -4,7 +4,7 @@
 
 它由两部分组成：
 
-- **dsh-PEC 插件**（包名仍是 `cc-dsh`）：跑在电脑的 DSH 进程里，提供带鉴权的手机网关 + 一个手机版网页界面；
+- **dsh-PEC 插件**（包名 `dsh-pec`）：跑在电脑的 DSH 进程里，提供带鉴权的手机网关 + 一个手机版网页界面；
 - **cc-dsh APK**：约 25 KB 的原生外壳，只负责配对、保存信任、承载界面。
 
 返回手势：面板 → 会话 → 列表逐层返回，**只有回到会话列表时**按返回/侧滑才会询问是否退出，不会在聊天里误弹退出框。
@@ -105,9 +105,11 @@ docs/tailscale.md       电脑版 + 手机版 Tailscale 安装与使用
 三种方式任选其一，**推荐前两种**：
 
 - 下载 Release 里的 `cc-dsh-plugin-<版本>.zip`，解压得到 `plugin-ccdsh/`，用插件管理界面「安装本地目录」选中它（本地目录不受 pnpm 锁文件影响，最稳）；
-- `dsh plugin add cc-dsh`（发布到 npm 后可用，版本不可变，最不容易出问题）；
+- `dsh plugin add dsh-pec`（发布到 npm 后可用，版本不可变，最不容易出问题）；
 - 从 GitHub 装：`dsh plugin add huajikano/dsh-PEC#v1.9.2` —— **一定要带 `#tag`**。
 
+> **从 1.x 升级到 2.0.0**：2.0.0 把包名从 `cc-dsh` 改成了 `dsh-pec`（和仓库同名）。包名就是 DSH 里的插件身份，所以这是一次破坏性迁移：先卸载旧的 `cc-dsh`，再装新的 `dsh-pec`。配对记录会自动从 `%DSH_HOME%\cc-dsh\` 复制到 `%DSH_HOME%\dsh-pec\`，手机不用重新配对。
+>
 > 为什么不建议直接填 `huajikano/dsh-PEC`：pnpm 会把 GitHub 生成的 tarball 哈希写进 profile 的 `pnpm-lock.yaml`，而主分支一动（我们每次发版都会动），同一个 `github:` 来源的内容就变了。pnpm 在安装/更新时**会校验锁文件里所有 git 来源的包**，任何一个哈希对不上就整体失败，报 `ERR_PNPM_TARBALL_INTEGRITY`——表现就是"所有插件都装不上/更新不了"。钉到 tag 就不会漂移。
 
 已经撞上这个错的话，修法见 [docs/INSTALL-plugin.md](docs/INSTALL-plugin.md#pnpm-锁文件报-tarball-integrity-错误)。

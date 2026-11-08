@@ -1,4 +1,4 @@
-# cc-dsh 插件 · 安装说明
+# dsh-PEC 插件 · 安装说明
 
 这个压缩包是 **DSH 插件**本体（不是 APK）。APK 在同一次 Release 里，文件名 `cc-dsh-<版本>.apk`。
 
@@ -21,7 +21,7 @@ D:\Tools\cc-dsh\plugin-ccdsh
 - **插件管理界面**：DSH → 设置 → 插件 → 安装本地目录 → 选择上面的 `plugin-ccdsh` 目录；
 - **命令行**：在 DSH 里让助手执行 `plugin_manager` 的 `install_bundle`，target 填该目录的绝对路径。
 
-安装成功后，插件行名称为 `cc-dsh`，状态应为 active。
+安装成功后，插件行名称为 `dsh-pec`，状态应为 active。
 
 ## 3. 确认网关起来了
 
@@ -95,4 +95,4 @@ ERR_PNPM_TARBALL_INTEGRITY  tarball integrity doesn't match the one in the lockf
 
 ## 6. 卸载
 
-插件管理里禁用或卸载 `cc-dsh` 即可。已配对记录保存在 `%DSH_HOME%\cc-dsh\state.json`（删掉该目录等于重置所有设备）。
+插件管理里禁用或卸载 `dsh-pec` 即可。已配对记录保存在 `%DSH_HOME%\dsh-pec\state.json`（删掉该目录等于重置所有设备）。

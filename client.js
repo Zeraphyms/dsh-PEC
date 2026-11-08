@@ -1,12 +1,12 @@
 /**
- * cc-dsh client half: one Settings section that shows how the phone connects.
+ * dsh-PEC client half: one Settings section that shows how the phone connects.
  *
  * The gateway port is injected into index.html by the host half
  * (`window.__CCDSH__`), so this panel always talks to the right port, and the
  * request is loopback-owned, which the gateway treats as the PC owner.
  */
 window.__ModuleLoader__.load({
-  id: 'cc-dsh',
+  id: 'dsh-pec',
   factory(require) {
     const React = require('react')
     const h = React.createElement
@@ -122,7 +122,7 @@ window.__ModuleLoader__.load({
         h('div', { style: styles.card }, [
           h('div', { style: styles.label }, '手机配对码'),
           h('div', { style: styles.code }, code || '—'),
-          h('div', { style: styles.dim }, '在手机 cc-dsh App 里输入这 6 位数字。码每 10 分钟自动更换，用过一次即失效。'),
+          h('div', { style: styles.dim }, '在手机 App 里输入这 6 位数字。码每 10 分钟自动更换，用过一次即失效。'),
         ]),
         h('div', { style: styles.card }, [
           h('div', { style: styles.label }, '连接地址'),
@@ -223,7 +223,7 @@ window.__ModuleLoader__.load({
       apply(ctx) {
         ctx.slots.inject('settings.section', () =>
           ctx.slots.register(
-            { name: 'settings.section', id: 'cc-dsh-phone', order: 92, label: '手机连接' },
+            { name: 'settings.section', id: 'dsh-pec-phone', order: 92, label: '手机连接' },
             Panel,
           ),
         )

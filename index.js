@@ -1,6 +1,6 @@
 /**
- * cc-dsh host plugin: a small authenticated HTTP gateway that lets a phone
- * (the cc-dsh Android shell, or any browser) drive this DeepSeek Harness.
+ * dsh-PEC host plugin: a small authenticated HTTP gateway that lets a phone
+ * (the dsh-PEC Android shell, or any browser) drive this DeepSeek Harness.
  *
  * Everything runs in the Harness host process; there is no second service to
  * start. The gateway serves a mobile web UI and a JSON API that calls the
@@ -13,7 +13,7 @@
  */
 import { Gateway } from './lib/gateway.js'
 
-export const name = 'cc-dsh'
+export const name = 'dsh-pec'
 
 // The Loader passes the row's raw `config` object; defaults live here so the
 // plugin stays usable with an empty row and never depends on a schema runtime.
@@ -36,7 +36,7 @@ export function apply(ctx, config = {}) {
   } catch (error) {
     // Construction touches Harness services; a signature change must degrade,
     // not abort the profile.
-    log.error('cc-dsh could not initialise; the harness itself is unaffected:', error?.stack || error)
+    log.error('dsh-PEC could not initialise; the harness itself is unaffected:', error?.stack || error)
     return
   }
 
@@ -48,12 +48,12 @@ export function apply(ctx, config = {}) {
       return () => gateway.stop()
     })
   } catch (error) {
-    log.error('cc-dsh could not register its lifecycle:', error?.stack || error)
+    log.error('dsh-PEC could not register its lifecycle:', error?.stack || error)
   }
 }
 
 function makeLogger(ctx) {
-  const prefix = '[cc-dsh]'
+  const prefix = '[dsh-pec]'
   const wrap = (fn) => (...args) => {
     try {
       fn(prefix, ...args)
