@@ -564,15 +564,24 @@ function chatRows() {
 
   if (state.hasMore && state.events.length) rows.push(loadEarlierRow())
 
+  // A reconnect can hand the same seq twice (live frame plus the following
+  // snapshot). Counting a duplicate would inflate that turn's tokens, so the
+  // transcript renders every seq at most once.
+  const seenSeqs = new Set()
+
   for (const event of state.events) {
     if (!event || !event.type) continue
+    if (event.seq != null) {
+      if (seenSeqs.has(event.seq)) continue
+      seenSeqs.add(event.seq)
+    }
     // Only append-origin surface events belong in the transcript; runtime
     // context and tool-addition rows are model-facing bookkeeping.
     if (event.surfaceOp && event.surfaceOp !== 'append') continue
     if (event.type === 'turn/start') {
       turnStartedAt = event.time || null
       lastAssistantColumn = null
-      turnUsage = { tokens: 0, input: 0, cache: 0 }
+      turnUsage = { tokens: 0, input: 0, cache: 0, cacheWrite: 0 }
       continue
     }
     if (event.type === 'user/message') {
