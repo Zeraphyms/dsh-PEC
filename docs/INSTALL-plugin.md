@@ -62,6 +62,24 @@ Get-NetFirewallRule -Enabled True -Direction Inbound -Action Block |
   Set-NetFirewallRule -Enabled False
 ```
 
+## pnpm 锁文件报 TARBALL INTEGRITY 错误
+
+DSH 的插件安装/更新走 pnpm。用 `github:` 来源装的插件，pnpm 会把 GitHub 生成的 tarball 哈希写进 profile 的 `pnpm-lock.yaml`；作者一发版、主分支一动，同一个来源的内容就变了，而 pnpm **安装时会校验锁文件里所有 git 来源的包**——只要有一条对不上就整体失败：
+
+```
+ERR_PNPM_TARBALL_INTEGRITY  tarball integrity doesn't match the one in the lockfile
+```
+
+表现是「所有插件都装不上/更新不了」，不是某一个插件坏了，也不是装了 pnpm。
+
+### 修法（任选其一）
+
+1. **重新生成锁文件**（最干净）：退出 DSH，把 profile 目录下的 `pnpm-lock.yaml` 改名备份（如 `pnpm-lock.yaml.bak`），再打开 DSH 安装/更新，pnpm 会重新解析并写入新哈希。`cordis.patch.yml`、`package.json` 不用动，已装的插件和配对状态都不受影响。
+2. **只改那一条**：按报错里 `Got` 的值，更新锁文件里对应包的 `resolution.integrity`（前提是来源可信）。
+3. **换成不漂移的安装方式**：解压 zip 用「安装本地目录」，或 git 地址固定到 tag（`owner/repo#v1.9.2`）。
+
+> profile 目录一般在 `%DSH_HOME%\profiles\<profile>\`（`DSH_HOME` 默认 `~/.dsh`）。
+
 ## 4. 配手机
 
 1. 手机装 Release 里的 APK；

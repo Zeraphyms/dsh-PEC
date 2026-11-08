@@ -102,11 +102,15 @@ docs/tailscale.md       电脑版 + 手机版 Tailscale 安装与使用
 
 ### 1. 安装插件
 
-三种方式任选其一：
+三种方式任选其一，**推荐前两种**：
 
-- `dsh plugin add huajikano/dsh-PEC`（仓库根目录就是插件包，`package.json` 里带 `dsh.bundle` 清单）；
-- 下载 Release 里的 `cc-dsh-plugin-<版本>.zip`，解压得到 `plugin-ccdsh/`，用插件管理界面「安装本地目录」选中它；
-- 直接用 `plugin_manager` 工具的 `install_bundle`，target 指向该目录的绝对路径。
+- 下载 Release 里的 `cc-dsh-plugin-<版本>.zip`，解压得到 `plugin-ccdsh/`，用插件管理界面「安装本地目录」选中它（本地目录不受 pnpm 锁文件影响，最稳）；
+- `dsh plugin add cc-dsh`（发布到 npm 后可用，版本不可变，最不容易出问题）；
+- 从 GitHub 装：`dsh plugin add huajikano/dsh-PEC#v1.9.2` —— **一定要带 `#tag`**。
+
+> 为什么不建议直接填 `huajikano/dsh-PEC`：pnpm 会把 GitHub 生成的 tarball 哈希写进 profile 的 `pnpm-lock.yaml`，而主分支一动（我们每次发版都会动），同一个 `github:` 来源的内容就变了。pnpm 在安装/更新时**会校验锁文件里所有 git 来源的包**，任何一个哈希对不上就整体失败，报 `ERR_PNPM_TARBALL_INTEGRITY`——表现就是"所有插件都装不上/更新不了"。钉到 tag 就不会漂移。
+
+已经撞上这个错的话，修法见 [docs/INSTALL-plugin.md](docs/INSTALL-plugin.md#pnpm-锁文件报-tarball-integrity-错误)。
 
 安装后插件会监听 `0.0.0.0:7317`（端口被占用时自动换随机端口，日志里会打印实际地址）。
 
