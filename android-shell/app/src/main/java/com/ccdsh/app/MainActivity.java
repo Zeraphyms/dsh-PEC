@@ -69,7 +69,10 @@ public class MainActivity extends Activity {
     private static final String KEY_URL = "baseUrl";
     private static final String KEY_TOKEN = "token";
     private static final String KEY_NAME = "serverName";
+    private static final String KEY_SERVER_ID = "serverId";
     private static final int REQ_FILE = 4101;
+    /** How long a main-frame load may stay unfinished before it is called dead. */
+    private static final long LOAD_TIMEOUT_MS = 12000;
 
     private SharedPreferences prefs;
     private FrameLayout root;
@@ -83,6 +86,8 @@ public class MainActivity extends Activity {
     private String serverName;
     private boolean setupMode;
     private boolean backPending;
+    private volatile boolean pageLoaded;
+    private String serverId;
     private ValueCallback<Uri[]> filePathCallback;
     private final ExecutorService io = Executors.newSingleThreadExecutor();
 
@@ -93,6 +98,7 @@ public class MainActivity extends Activity {
         baseUrl = trimUrl(prefs.getString(KEY_URL, ""));
         token = prefs.getString(KEY_TOKEN, "");
         serverName = prefs.getString(KEY_NAME, "cc-dsh");
+        serverId = prefs.getString(KEY_SERVER_ID, "");
 
         root = new FrameLayout(this);
         root.setBackgroundColor(getColor(R.color.dsh_bg));
@@ -278,10 +284,14 @@ public class MainActivity extends Activity {
             String newToken = result.optString("token");
             String name = result.optJSONObject("server") != null
                     ? result.optJSONObject("server").optString("name", "cc-dsh") : "cc-dsh";
-            prefs.edit().putString(KEY_URL, url).putString(KEY_TOKEN, newToken).putString(KEY_NAME, name).apply();
+            String id = result.optJSONObject("server") != null
+                    ? result.optJSONObject("server").optString("id", "") : "";
+            prefs.edit().putString(KEY_URL, url).putString(KEY_TOKEN, newToken)
+                    .putString(KEY_NAME, name).putString(KEY_SERVER_ID, id).apply();
             baseUrl = url;
             token = newToken;
             serverName = name;
+            serverId = id;
             runOnUiThread(() -> {
                 Toast.makeText(this, "已连接", Toast.LENGTH_SHORT).show();
                 showWeb();
@@ -395,6 +405,7 @@ public class MainActivity extends Activity {
 
             @Override
             public void onPageFinished(WebView view, String url) {
+                pageLoaded = true;
                 if (progress != null) progress.setVisibility(View.GONE);
                 setStatus(serverName);
             }
@@ -429,8 +440,89 @@ public class MainActivity extends Activity {
             }
         });
 
-        web.loadUrl(baseUrl + "/");
+        web.loadUrl("about:blank");
+        loadWithRecovery();
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
+    }
+
+    // ---------------------------------------------------------------- connect
+
+    /**
+     * Load the stored URL without ever leaving a blank WebView behind: prove the
+     * server answers first, and when the saved address is dead (Tailscale turned
+     * off, another Wi-Fi) look for the same server on the LAN and switch to it.
+     */
+    private void loadWithRecovery() {
+        final String target = baseUrl;
+        if (web == null || target == null || target.isEmpty()) return;
+        pageLoaded = false;
+        io.execute(() -> {
+            if (ping(target)) {
+                runOnUiThread(() -> loadPage(target));
+                return;
+            }
+            String lan = findLanUrl();
+            if (lan != null) {
+                baseUrl = lan;
+                prefs.edit().putString(KEY_URL, lan).apply();
+                runOnUiThread(() -> {
+                    Toast.makeText(this, "已切换到局域网地址", Toast.LENGTH_SHORT).show();
+                    loadPage(lan);
+                });
+                return;
+            }
+            runOnUiThread(() -> showError("连不上电脑上的 cc-dsh 插件。\n\n"
+                    + "刚关掉 Tailscale 的话，点「在局域网里查找」，它会广播找这台电脑。"));
+        });
+    }
+
+    private void loadPage(String url) {
+        final WebView target = web;
+        if (target == null) return;
+        pageLoaded = false;
+        target.loadUrl(url + "/");
+        target.postDelayed(() -> {
+            if (!pageLoaded && web == target && errorView == null) {
+                showError("页面加载超时。\n\n电脑上的插件可能换了地址，或者手机不在同一个网络。");
+            }
+        }, LOAD_TIMEOUT_MS);
+    }
+
+    /** True when the gateway answers /api/ping within a couple of seconds. */
+    private boolean ping(String base) {
+        HttpURLConnection conn = null;
+        try {
+            conn = (HttpURLConnection) new URL(base + "/api/ping").openConnection();
+            conn.setConnectTimeout(2500);
+            conn.setReadTimeout(2500);
+            conn.setRequestMethod("GET");
+            if (conn.getResponseCode() != 200) return false;
+            return readAll(conn.getInputStream()).contains("\"ok\":true");
+        } catch (Exception error) {
+            return false;
+        } finally {
+            if (conn != null) conn.disconnect();
+        }
+    }
+
+    /**
+     * Broadcast for the same server (by id when we know it, otherwise any
+     * answering one) and return its LAN URL. Tailscale addresses are skipped:
+     * they are exactly what just failed to answer.
+     */
+    private String findLanUrl() {
+        try {
+            for (JSONObject server : Discovery.find(1600)) {
+                String address = server.optString("address", "");
+                if (address.isEmpty() || address.startsWith("100.")) continue;
+                String id = server.optString("serverId", "");
+                if (!serverId.isEmpty() && !id.isEmpty() && !id.equals(serverId)) continue;
+                String url = "http://" + address + ":" + server.optInt("port", 7317);
+                if (ping(url)) return url;
+            }
+        } catch (Exception ignored) {
+        }
+        return null;
     }
 
     private void showMenu() {
@@ -449,7 +541,7 @@ public class MainActivity extends Activity {
                         }
                     } else {
                         new AlertDialog.Builder(this)
-                                .setTitle("cc-dsh 1.0.4")
+                                .setTitle("cc-dsh 1.0.5")
                                 .setMessage("手机操控电脑上的 DeepSeek Harness。\n\n电脑端：DSH 插件 cc-dsh 提供网关与会话控制。\n手机端：本应用只负责配对、信任与承载界面。")
                                 .setPositiveButton("好", null)
                                 .show();
@@ -485,10 +577,18 @@ public class MainActivity extends Activity {
         retry.setOnClickListener(v -> {
             if (errorView != null) root.removeView(errorView);
             errorView = null;
-            if (web != null) web.reload();
+            loadWithRecovery();
             setStatus(serverName);
         });
         column.addView(retry, lp(0, 6));
+
+        Button findLan = button("在局域网里查找", true);
+        findLan.setOnClickListener(v -> {
+            if (errorView != null) root.removeView(errorView);
+            errorView = null;
+            loadWithRecovery();
+        });
+        column.addView(findLan, lp(0, 8));
 
         Button other = button("换一台电脑", true);
         other.setOnClickListener(v -> {
