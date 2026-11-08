@@ -598,15 +598,20 @@ function chatRows() {
       const text = textOf(message?.content)
       const reasoning = reasoningOf(message?.content)
       // Token usage rides on each assistant message; the turn's figure is their sum.
-      // `tok` counts what the turn actually sent and received (input + output);
-      // cached prompt reads are reported as the hit rate instead, so the number
-      // stays comparable with the desktop footer.
+      // `tok` follows the desktop's meter exactly: uncached input + cache read +
+      // cache write + output (dsh-token-meter's usageTokens). Counting only
+      // input+output made a cached conversation look ~100× cheaper than it is.
       if (event.data?.usage) {
         const usage = event.data.usage
-        turnUsage = turnUsage || { tokens: 0, input: 0, cache: 0 }
-        turnUsage.tokens += (Number(usage.inputTokens) || 0) + (Number(usage.outputTokens) || 0)
-        turnUsage.input += Number(usage.inputTokens) || 0
-        turnUsage.cache += Number(usage.cacheReadTokens) || 0
+        const input = Number(usage.inputTokens) || 0
+        const cacheRead = Number(usage.cacheReadTokens) || 0
+        const cacheWrite = Number(usage.cacheWriteTokens) || 0
+        const output = Number(usage.outputTokens) || 0
+        turnUsage = turnUsage || { tokens: 0, input: 0, cache: 0, cacheWrite: 0 }
+        turnUsage.tokens += input + cacheRead + cacheWrite + output
+        turnUsage.input += input
+        turnUsage.cache += cacheRead
+        turnUsage.cacheWrite += cacheWrite
       }
       if (!text && !reasoning) continue
       const bubble = el('div', { class: 'bubble' }, [
@@ -641,14 +646,9 @@ function chatRows() {
       }
       if (turnUsage && turnUsage.tokens > 0) {
         parts.push(`${tokenCount(turnUsage.tokens)} tok`)
-        const prompt = turnUsage.input + turnUsage.cache
-        if (prompt > 0) {
-          const rate = (turnUsage.cache / prompt) * 100
-          // Keep one decimal near the top, but never print a rounded 100.0%:
-          // a fully cached prompt still had some uncached tail.
-          const shown = rate >= 99.95 ? '99.9' : rate >= 99.5 ? rate.toFixed(1) : String(Math.round(rate))
-          parts.push(`缓存命中 ${shown}%`)
-        }
+        const prompt = turnUsage.input + turnUsage.cache + (turnUsage.cacheWrite || 0)
+        const hit = cacheHitLabel(turnUsage.cache, prompt)
+        if (hit) parts.push(`缓存命中 ${hit}%`)
       }
       if (parts.length) {
         const text = parts.join(' · ')
@@ -698,9 +698,24 @@ function chatRows() {
   return rows
 }
 
+/**
+ * Cache hit percentage the way the desktop formats it: start at one decimal and
+ * add precision until the number stops rounding up to 100, so a nearly cached
+ * prompt never reads as "100.0%" when a few tokens were still uncached.
+ */
+function cacheHitLabel(cacheRead, prompt) {
+  if (!prompt || prompt <= 0) return null
+  if (prompt - cacheRead <= 0) return '100'
+  for (let places = 1; places <= 4; places += 1) {
+    const factor = 10 ** places
+    const units = Math.round((cacheRead / prompt) * 100 * factor)
+    if (units < 100 * factor) return (units / factor).toFixed(places)
+  }
+  return '99.9999'
+}
+
 /** 812 / 12.4k / 3.9M — compact token counts like the desktop footer. */
-function tokenCount(value) {
-  const n = Number(value) || 0
+function tokenCount(value) {  const n = Number(value) || 0
   if (n >= 1e6) return `${(n / 1e6).toFixed(1).replace(/\.0$/, '')}M`
   if (n >= 1000) return `${(n / 1000).toFixed(1).replace(/\.0$/, '')}k`
   return String(n)
