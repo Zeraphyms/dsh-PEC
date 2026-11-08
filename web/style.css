@@ -358,11 +358,11 @@ a { color: var(--dsw-brand); text-decoration: none; }
   object-fit: cover;
 }
 
-/* Wall-clock time for the turn that produced the answer above. */
+/* Wall-clock time for the turn, under the answer it produced. */
 .turn-meta {
   font-size: var(--fs-caption);
   color: var(--dsw-label-tertiary);
-  margin-bottom: 6px;
+  margin: 6px 0 0;
 }
 
 /* Answer actions: copy, read aloud — small and quiet, like the desktop row. */

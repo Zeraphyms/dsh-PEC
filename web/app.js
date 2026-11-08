@@ -621,11 +621,11 @@ function chatRows() {
       rows.push(el('div', { class: 'row note' }, [el('div', { class: 'note-pill', text: '已停止' })]))
     }
     if (event.type === 'turn/end') {
-      // Duration belongs to the turn, so it goes above the answer it produced.
+      // The duration sits under the answer it belongs to, bottom-left.
       if (turnStartedAt && event.time && event.time >= turnStartedAt) {
         const label = elapsedLabel(event.time - turnStartedAt)
         if (lastAssistantColumn) {
-          lastAssistantColumn.prepend(el('div', { class: 'turn-meta', text: `本轮用时 ${label}` }))
+          lastAssistantColumn.append(el('div', { class: 'turn-meta', text: `本轮用时 ${label}` }))
         } else {
           rows.push(el('div', { class: 'row note' }, [el('div', { class: 'note-pill', text: `本轮用时 ${label}` })]))
         }
@@ -640,7 +640,19 @@ function chatRows() {
     if (card.parent && !card.parent.isConnected) rows.push(card.parent)
   }
 
-  // A turn that is still running gets a live clock; ensureTurnClock() ticks it.
+  if (state.live && (state.live.text || state.live.reasoning)) {
+    rows.push(
+      el('div', { class: 'row assistant' }, [
+        el('div', { class: 'bubble', id: 'live-bubble' }, [
+          state.live.reasoning ? reasoningNode(state.live.reasoning) : null,
+          state.live.text ? el('div', { id: 'live-text', text: state.live.text }) : null,
+        ]),
+      ]),
+    )
+  }
+
+  // A turn that is still running gets a live clock under the answer;
+  // ensureTurnClock() ticks it.
   if (state.current?.running && state.turnStartedAt) {
     rows.push(
       el('div', { class: 'row' }, [
@@ -649,17 +661,6 @@ function chatRows() {
           id: 'turn-clock',
           text: `已用时 ${elapsedLabel(Date.now() - state.turnStartedAt)}`,
         }),
-      ]),
-    )
-  }
-
-  if (state.live && (state.live.text || state.live.reasoning)) {
-    rows.push(
-      el('div', { class: 'row assistant' }, [
-        el('div', { class: 'bubble', id: 'live-bubble' }, [
-          state.live.reasoning ? reasoningNode(state.live.reasoning) : null,
-          state.live.text ? el('div', { id: 'live-text', text: state.live.text }) : null,
-        ]),
       ]),
     )
   }
