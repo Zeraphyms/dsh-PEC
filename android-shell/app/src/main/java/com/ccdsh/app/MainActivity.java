@@ -50,10 +50,13 @@ import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.HttpURLConnection;
 import java.net.InetAddress;
+import java.net.InterfaceAddress;
+import java.net.NetworkInterface;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -541,7 +544,7 @@ public class MainActivity extends Activity {
                         }
                     } else {
                         new AlertDialog.Builder(this)
-                                .setTitle("cc-dsh 1.0.5")
+                                .setTitle("cc-dsh 1.0.6")
                                 .setMessage("手机操控电脑上的 DeepSeek Harness。\n\n电脑端：DSH 插件 cc-dsh 提供网关与会话控制。\n手机端：本应用只负责配对、信任与承载界面。")
                                 .setPositiveButton("好", null)
                                 .show();
@@ -843,15 +846,39 @@ public class MainActivity extends Activity {
             try {
                 socket = new DatagramSocket();
                 socket.setBroadcast(true);
-                socket.setSoTimeout(300);
+                socket.setSoTimeout(250);
                 byte[] payload = "CCDSH-DISCOVER-1".getBytes(StandardCharsets.UTF_8);
-                DatagramPacket packet = new DatagramPacket(payload, payload.length,
-                        InetAddress.getByName("255.255.255.255"), 55901);
-                socket.send(packet);
+
+                // Android drops the limited broadcast on plenty of Wi-Fi stacks and
+                // some access points filter it. Send to every interface's subnet
+                // broadcast as well, and repeat: one lost datagram should not mean
+                // "not found".
+                List<InetAddress> targets = new ArrayList<>();
+                targets.add(InetAddress.getByName("255.255.255.255"));
+                try {
+                    for (NetworkInterface nic : Collections.list(NetworkInterface.getNetworkInterfaces())) {
+                        if (!nic.isUp() || nic.isLoopback()) continue;
+                        for (InterfaceAddress address : nic.getInterfaceAddresses()) {
+                            InetAddress broadcast = address.getBroadcast();
+                            if (broadcast != null) targets.add(broadcast);
+                        }
+                    }
+                } catch (Exception ignored) {
+                }
 
                 long deadline = System.currentTimeMillis() + timeoutMs;
+                int rounds = 0;
                 byte[] buffer = new byte[2048];
                 while (System.currentTimeMillis() < deadline) {
+                    if (rounds < 4) {
+                        for (InetAddress target : targets) {
+                            try {
+                                socket.send(new DatagramPacket(payload, payload.length, target, 55901));
+                            } catch (Exception ignored) {
+                            }
+                        }
+                        rounds += 1;
+                    }
                     try {
                         DatagramPacket reply = new DatagramPacket(buffer, buffer.length);
                         socket.receive(reply);

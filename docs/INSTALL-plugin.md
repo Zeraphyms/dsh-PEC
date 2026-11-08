@@ -34,6 +34,21 @@ curl.exe http://127.0.0.1:7317/api/ping
 # {"ok":true,"server":{"id":"...","name":"<你的电脑名>"}}
 ```
 
+### 手机搜不到 / 连不上？先看 Windows 防火墙
+
+家里的 Wi-Fi 在 Windows 上常被识别成 **"公用网络"**，公用配置默认**拒绝所有入站连接**——于是手机既收不到广播、也连不上 7317，表现就是「自动查找找不到」和「填 IP 也连不上」。
+
+以管理员身份开一次 PowerShell，放行这两个端口即可（TCP 是网关，UDP 是局域网发现）：
+
+```powershell
+netsh advfirewall firewall add rule name="cc-dsh gateway" dir=in action=allow protocol=TCP localport=7317
+netsh advfirewall firewall add rule name="cc-dsh discovery" dir=in action=allow protocol=UDP localport=55901
+```
+
+如果网关换了端口（7317 被占用），第一条命令里的端口要跟着改；插件启动日志里会打印实际端口。
+
+排查顺序：在电脑上 `curl.exe http://<局域网IP>:7317/api/ping` 能通 → 说明监听正常，问题在防火墙或路由器；仍不通 → 看端口有没有被占用。
+
 ## 4. 配手机
 
 1. 手机装 Release 里的 APK；
