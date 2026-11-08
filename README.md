@@ -5,7 +5,7 @@
 它由两部分组成：
 
 - **dsh-PEC 插件**（包名 `dsh-pec`）：跑在电脑的 DSH 进程里，提供带鉴权的手机网关 + 一个手机版网页界面；
-- **cc-dsh APK**：约 25 KB 的原生外壳，只负责配对、保存信任、承载界面。
+- **dsh-PEC APK**：约 25 KB 的原生外壳，只负责配对、保存信任、承载界面。
 
 返回手势：面板 → 会话 → 列表逐层返回，**只有回到会话列表时**按返回/侧滑才会询问是否退出，不会在聊天里误弹退出框。
 
@@ -50,7 +50,7 @@
 
 ```
 ┌──────────────────┐        HTTP + SSE         ┌──────────────────────────────┐
-│  cc-dsh APK       │  ───────────────────────▶ │  cc-dsh 插件（DSH 进程内）    │
+│  dsh-PEC APK    │  ───────────────────────▶ │  dsh-PEC 插件（DSH 进程内）  │
 │  WebView + 配对    │                           │                              │
 └──────────────────┘                           │  sessionController  会话/模型 │
                                                │  agentPresets       预设      │
@@ -89,7 +89,7 @@ docs/tailscale.md       电脑版 + 手机版 Tailscale 安装与使用
 | 文件 | 用途 |
 | --- | --- |
 | `cc-dsh-plugin-<版本>.zip` | DSH 插件。解压得到 `plugin-ccdsh/`，在 DSH 里「安装本地目录」指向它 |
-| `cc-dsh-<版本>.apk` | Android 手机端（约 25 KB） |
+| `dsh-pec-<版本>.apk` | Android 手机端（约 25 KB） |
 
 插件安装步骤（含校验、端口确认、卸载）见 **[docs/INSTALL-plugin.md](docs/INSTALL-plugin.md)**。
 
@@ -118,8 +118,10 @@ docs/tailscale.md       电脑版 + 手机版 Tailscale 安装与使用
 
 ### 2. 安装 APK
 
-- 下载 Release 里的 `cc-dsh.apk`；或
-- 自行构建（见下文「自行构建」），产物在 `dist/cc-dsh.apk`。
+- 下载 Release 里的 `dsh-pec-<版本>.apk`；或
+- 自行构建（见下文「自行构建」），产物在 `dist/cc-dsh.apk`（构建脚本沿用旧文件名）。
+
+> 2.0.0 只改了 APK 的**显示名**（应用名 `dsh-PEC`），包名仍是 `com.ccdsh.app`，所以能覆盖安装，配对不会丢。
 
 ### 3. 配对
 

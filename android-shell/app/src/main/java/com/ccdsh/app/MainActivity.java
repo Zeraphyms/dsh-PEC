@@ -62,8 +62,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * cc-dsh: a thin, stable shell around the DSH phone gateway served by the
- * cc-dsh plugin on the PC. The real UI lives on the PC (so features never
+ * dsh-PEC: a thin, stable shell around the DSH phone gateway served by the
+ * dsh-PEC plugin on the PC. The real UI lives on the PC (so features never
  * drift), while this app owns pairing, trust, and Android integration.
  */
 @SuppressLint("SetJavaScriptEnabled")
@@ -100,7 +100,7 @@ public class MainActivity extends Activity {
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         baseUrl = trimUrl(prefs.getString(KEY_URL, ""));
         token = prefs.getString(KEY_TOKEN, "");
-        serverName = prefs.getString(KEY_NAME, "cc-dsh");
+        serverName = prefs.getString(KEY_NAME, "dsh-PEC");
         serverId = prefs.getString(KEY_SERVER_ID, "");
 
         root = new FrameLayout(this);
@@ -156,10 +156,10 @@ public class MainActivity extends Activity {
         scroll.addView(column, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        TextView title = text("cc-dsh", 30, R.color.dsh_text, true);
+        TextView title = text("dsh-PEC", 30, R.color.dsh_text, true);
         column.addView(title);
 
-        TextView subtitle = text("把手机接到电脑上的 DeepSeek Harness。\n在电脑 DSH 里启用 cc-dsh 插件后，输入它显示的 6 位配对码即可。", 14, R.color.dsh_text_secondary, false);
+        TextView subtitle = text("把手机接到电脑上的 DeepSeek Harness。\n在电脑 DSH 里启用 dsh-PEC 插件后，输入它显示的 6 位配对码即可。", 14, R.color.dsh_text_secondary, false);
         subtitle.setPadding(0, dp(8), 0, dp(20));
         column.addView(subtitle);
 
@@ -286,7 +286,7 @@ public class MainActivity extends Activity {
             JSONObject result = new JSONObject(text);
             String newToken = result.optString("token");
             String name = result.optJSONObject("server") != null
-                    ? result.optJSONObject("server").optString("name", "cc-dsh") : "cc-dsh";
+                    ? result.optJSONObject("server").optString("name", "dsh-PEC") : "dsh-PEC";
             String id = result.optJSONObject("server") != null
                     ? result.optJSONObject("server").optString("id", "") : "";
             prefs.edit().putString(KEY_URL, url).putString(KEY_TOKEN, newToken)
@@ -347,7 +347,7 @@ public class MainActivity extends Activity {
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);
         settings.setCacheMode(WebSettings.LOAD_DEFAULT);
         settings.setJavaScriptCanOpenWindowsAutomatically(true);
-        settings.setUserAgentString(settings.getUserAgentString() + " cc-dsh/1.0");
+        settings.setUserAgentString(settings.getUserAgentString() + " dsh-PEC/1.1");
         if (android.os.Build.VERSION.SDK_INT >= 29) {
             // The page ships its own light and dark palettes (mirrored from the
             // desktop's ui-theme); the automatic WebView darkening would invert
@@ -415,7 +415,7 @@ public class MainActivity extends Activity {
 
             @Override
             public void onReceivedError(WebView view, WebResourceRequest request, android.webkit.WebResourceError error) {
-                if (request.isForMainFrame()) showError("连不上电脑上的 cc-dsh 插件\n" + error.getDescription());
+                if (request.isForMainFrame()) showError("连不上电脑上的 dsh-PEC 插件\n" + error.getDescription());
             }
 
             @Override
@@ -474,7 +474,7 @@ public class MainActivity extends Activity {
                 });
                 return;
             }
-            runOnUiThread(() -> showError("连不上电脑上的 cc-dsh 插件。\n\n"
+            runOnUiThread(() -> showError("连不上电脑上的 dsh-PEC 插件。\n\n"
                     + "刚关掉 Tailscale 的话，点「在局域网里查找」，它会广播找这台电脑。"));
         });
     }
@@ -544,8 +544,8 @@ public class MainActivity extends Activity {
                         }
                     } else {
                         new AlertDialog.Builder(this)
-                                .setTitle("cc-dsh 1.0.6")
-                                .setMessage("手机操控电脑上的 DeepSeek Harness。\n\n电脑端：DSH 插件 cc-dsh 提供网关与会话控制。\n手机端：本应用只负责配对、信任与承载界面。")
+                                .setTitle("dsh-PEC 1.1.0")
+                                .setMessage("手机操控电脑上的 DeepSeek Harness。\n\n电脑端：DSH 插件 dsh-PEC 提供网关与会话控制。\n手机端：本应用只负责配对、信任与承载界面。")
                                 .setPositiveButton("好", null)
                                 .show();
                     }
@@ -665,7 +665,7 @@ public class MainActivity extends Activity {
 
     private void confirmExit() {
         new AlertDialog.Builder(this)
-                .setMessage("退出 cc-dsh？")
+                .setMessage("退出 dsh-PEC？")
                 .setPositiveButton("退出", (d, w) -> finish())
                 .setNegativeButton("取消", null)
                 .show();

@@ -1,6 +1,6 @@
 # dsh-PEC 插件 · 安装说明
 
-这个压缩包是 **DSH 插件**本体（不是 APK）。APK 在同一次 Release 里，文件名 `cc-dsh-<版本>.apk`。
+这个压缩包是 **DSH 插件**本体（不是 APK）。APK 在同一次 Release 里，文件名 `dsh-pec-<版本>.apk`。
 
 ## 1. 解压
 

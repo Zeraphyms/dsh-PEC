@@ -1,4 +1,4 @@
-/* cc-dsh mobile client: talks to the cc-dsh Host plugin on the PC. */
+/* dsh-PEC mobile client: talks to the dsh-PEC Host plugin on the PC. */
 
 const app = document.getElementById('app')
 const toastEl = document.getElementById('toast')
@@ -336,7 +336,7 @@ function renderPairing(message = '') {
   }
   app.replaceChildren(
     el('div', { class: 'pair' }, [
-      el('div', { class: 'boot-logo', text: 'cc-dsh' }),
+      el('div', { class: 'boot-logo', text: 'dsh-PEC' }),
       el('h1', { text: '配对你的电脑' }),
       el('p', { text: '第一次配对不用输码：手机和电脑在同一个 Wi-Fi（或都连着 Tailscale）时，直接点“连接”。之后再加手机才需要电脑上显示的 6 位配对码。' }),
       el('div', { class: 'field' }, [el('label', { text: '配对码（第一次可留空）' }), input]),
@@ -419,7 +419,7 @@ function renderSessions() {
   // Replace, never append: this view re-renders on every keystroke and on the
   // 15s refresh, and appending stacked whole screens on top of each other.
   app.replaceChildren(
-    topbar('cc-dsh', state.server?.name || '已连接', {
+    topbar('dsh-PEC', state.server?.name || '已连接', {
       right: [
         el('button', { class: 'icon-btn', title: '刷新', onclick: () => boot() }, [svg(ICON.refresh)]),
       ],
@@ -1691,7 +1691,7 @@ function serverSheet(close) {
   return [
     el('h2', { text: '这台电脑' }),
     el('div', { class: 'option' }, [el('div', { class: 'name' }, [
-      el('div', { text: info.name || 'cc-dsh 网关' }),
+      el('div', { text: info.name || 'dsh-PEC 网关' }),
       el('div', { class: 'desc', text: urls.map((u) => u.url).join('  ·  ') }),
     ])]),
     el('div', { class: 'divider' }),
