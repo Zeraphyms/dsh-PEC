@@ -966,3 +966,72 @@ a { color: var(--dsw-brand); text-decoration: none; }
   width: calc(100% - 4px);
 }
 .cleanup-link:active { opacity: 1; }
+
+/* ------------------------------------------------------------- questions */
+/* ask_user_question blocks the turn, so the card sits above the composer and
+   never scrolls away. Same tokens as the desktop card it mirrors. */
+.question-strip {
+  padding: 8px 12px 0;
+  background: var(--dsw-bg-base);
+}
+.question-card {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--dsw-border-l2, #e3e6eb);
+  border-radius: 16px;
+  background: var(--dsw-bg-layer-2, #fff);
+  padding: 14px;
+  box-shadow: 0 6px 20px rgba(15, 17, 21, 0.08);
+  max-height: 52vh;
+}
+/* Only the questions scroll; the buttons stay reachable at any length. */
+.question-body { overflow-y: auto; min-height: 0; }
+.question-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.question-kicker { font-size: 12px; color: var(--dsw-label-tertiary); }
+.question-item + .question-item { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--dsw-border-l1, #eef0f4); }
+.question-header { font-size: 12px; color: var(--dsw-label-tertiary); margin-bottom: 4px; }
+.question-text { font-size: 15px; line-height: 1.45; color: var(--dsw-label-primary); font-weight: 600; }
+.question-detail {
+  margin-top: 8px; padding: 10px; border-radius: 10px;
+  background: var(--dsw-bg-platform); color: var(--dsw-label-secondary);
+  font-size: 12px; line-height: 1.5; white-space: pre-wrap;
+  max-height: 140px; overflow-y: auto;
+}
+.question-options { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.question-option {
+  display: grid; grid-template-columns: 22px 1fr; gap: 2px 8px;
+  align-items: start; text-align: left; cursor: pointer;
+  padding: 10px 12px; border-radius: 12px;
+  border: 1px solid var(--dsw-border-l2, #e3e6eb);
+  background: var(--dsw-bg-layer-1, #fff);
+  color: var(--dsw-label-primary); font-size: 14px; font-family: inherit;
+}
+.question-option.on {
+  border-color: var(--dsw-brand);
+  background: var(--dsw-brand-soft);
+}
+.question-index {
+  grid-row: 1 / span 2;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; border-radius: 6px;
+  background: var(--dsw-bg-platform); color: var(--dsw-label-secondary);
+  font-size: 11px;
+}
+.question-option.on .question-index { background: var(--dsw-brand); color: var(--dsw-label-on-brand); }
+.question-label { font-weight: 600; line-height: 1.35; }
+.question-desc { grid-column: 2; font-size: 12px; color: var(--dsw-label-secondary); line-height: 1.4; }
+.question-custom {
+  margin-top: 10px; width: 100%; box-sizing: border-box;
+  padding: 10px 12px; border-radius: 12px;
+  border: 1px solid var(--dsw-border-l2, #e3e6eb);
+  background: var(--dsw-bg-platform); color: var(--dsw-label-primary);
+  font-size: 14px; font-family: inherit; outline: none;
+}
+.question-custom:focus { border-color: var(--dsw-brand); }
+.question-actions { display: flex; gap: 10px; margin-top: 14px; }
+.question-submit, .question-skip {
+  flex: 1; padding: 11px; border-radius: 999px; font-size: 14px; font-family: inherit;
+  cursor: pointer; border: 1px solid transparent;
+}
+.question-submit { background: var(--dsw-brand); color: var(--dsw-label-on-brand); font-weight: 600; }
+.question-skip { background: transparent; border-color: var(--dsw-border-l2, #e3e6eb); color: var(--dsw-label-secondary); }

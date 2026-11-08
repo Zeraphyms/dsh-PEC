@@ -69,6 +69,9 @@ const state = {
   running: false,
   stream: null,
   approvals: { pending: [], armedUntil: 0 },
+  questions: { pending: [] },
+  /** Answers typed into the open question card, keyed by question id. */
+  questionDrafts: {},
   archivedIds: [],
   filter: '',
   loading: true,
@@ -241,6 +244,7 @@ async function boot() {
     state.permissions = bootstrap.permissions || { options: [] }
     state.plugins = Array.isArray(bootstrap.plugins) ? bootstrap.plugins : []
     state.approvals = bootstrap.approvals || { pending: [], armedUntil: 0 }
+    state.questions = bootstrap.questions || { pending: [] }
     state.archivedIds = bootstrap.sessions?.archivedSessionIds || state.archivedIds || []
     // Compatibility self-check: the plugin reports which Host capabilities the
     // running DSH still offers, so a Harness update is visible in the UI.
@@ -250,6 +254,7 @@ async function boot() {
       state.health = null
     }
     state.loading = false
+    startPresence()
     const remembered = localStorage.getItem('ccdsh_last_session')
     if (remembered && state.sessions.some((s) => s.id === remembered)) openSession(remembered)
     else render()
@@ -264,8 +269,28 @@ async function boot() {
   }
 }
 
-function renderError(error) {
-  app.replaceChildren(
+/**
+ * Tell the gateway the app is on screen. It matters for questions: a request is
+ * answered here only while this page is visible, so a phone left idle in a
+ * pocket never swallows the dialog that belongs on the desktop.
+ */
+let presenceTimer = null
+function startPresence() {
+  if (presenceTimer) return
+  const beat = () => {
+    if (document.visibilityState !== 'visible') return
+    api('/api/presence', { method: 'POST', body: { session: state.current?.id || null } }).catch(() => {
+      /* offline; the next beat retries */
+    })
+  }
+  beat()
+  presenceTimer = setInterval(beat, 15_000)
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') beat()
+  })
+}
+
+function renderError(error) {  app.replaceChildren(
     el('div', { class: 'pair' }, [
       el('h1', { text: '连不上电脑' }),
       el('p', { text: String(error?.message || error) }),
@@ -482,6 +507,7 @@ function renderChat() {
   const chat = el('div', { class: 'chat', id: 'chat' }, body)
   const composer = composerNode()
   const approval = approvalStrip()
+  const questions = questionStrip()
 
   app.replaceChildren(
     topbar(title, meta, {
@@ -490,6 +516,7 @@ function renderChat() {
     }),
     approval || '',
     chat,
+    questions || '',
     composer,
   )
   if (state.preserveScroll != null) {
@@ -1322,8 +1349,114 @@ function approvalStrip() {
   ])
 }
 
-async function answerApproval(id, decision) {
+/* ---------------------------------------------------------------- questions */
+
+/**
+ * `ask_user_question` blocks the turn until someone answers. The desktop shows a
+ * card for it; this is the same card on the phone, pinned above the composer so
+ * it cannot be scrolled past. Options support single and multi select, plus the
+ * free-text "other" answer the protocol allows on every question.
+ */
+function questionStrip() {
+  const pending = state.questions?.pending || []
+  if (!pending.length) return null
+  const entry = pending[0]
+  const drafts = state.questionDrafts[entry.id] || {}
+
+  const answerFor = (question) => {
+    const draft = drafts[question.id] || {}
+    return {
+      selected: Array.isArray(draft.selected) ? draft.selected : [],
+      custom: draft.custom || '',
+    }
+  }
+  const setAnswer = (questionId, patch) => {
+    const entryDrafts = state.questionDrafts[entry.id] || (state.questionDrafts[entry.id] = {})
+    entryDrafts[questionId] = { ...(entryDrafts[questionId] || {}), ...patch }
+  }
+  const chosen = (question, label) => answerFor(question).selected.includes(label)
+  const toggle = (question, label) => {
+    const current = answerFor(question).selected
+    if (question.multiSelect) {
+      setAnswer(question.id, {
+        selected: current.includes(label) ? current.filter((item) => item !== label) : [...current, label],
+      })
+    } else {
+      // A single-select answer is one label, and picking one clears the others.
+      setAnswer(question.id, { selected: current.includes(label) ? [] : [label] })
+    }
+    render()
+  }
+
+  const remaining = pending.length > 1 ? ` · 还有 ${pending.length - 1} 组` : ''
+  return el('div', { class: 'question-strip' }, [
+    el('div', { class: 'question-card' }, [
+      el('div', { class: 'question-head' }, [
+        el('span', { class: 'question-kicker', text: `提问 · 等待回答${remaining}` }),
+      ]),
+      el('div', { class: 'question-body' }, entry.questions.map((question) =>
+        el('div', { class: 'question-item' }, [
+          question.header ? el('div', { class: 'question-header', text: question.header }) : null,
+          el('div', { class: 'question-text', text: question.question }),
+          question.detail ? el('div', { class: 'question-detail', text: question.detail }) : null,
+          question.options.length
+            ? el('div', { class: 'question-options' }, question.options.map((option, index) =>
+                el('button', {
+                  class: `question-option${chosen(question, option.label) ? ' on' : ''}`,
+                  onclick: () => toggle(question, option.label),
+                }, [
+                  el('span', { class: 'question-index', text: String(index + 1) }),
+                  el('span', { class: 'question-label', text: option.label }),
+                  option.description ? el('span', { class: 'question-desc', text: option.description }) : null,
+                ]),
+              ))
+            : null,
+          el('input', {
+            class: 'question-custom',
+            placeholder: question.options.length ? '或者自己写一个答案…' : '输入你的答案…',
+            value: answerFor(question).custom,
+            oninput: (event) => setAnswer(question.id, { custom: event.target.value }),
+          }),
+        ]),
+      )),
+      el('div', { class: 'question-actions' }, [
+        el('button', {
+          class: 'question-submit',
+          onclick: () => submitQuestion(entry),
+        }, '提交'),
+        el('button', {
+          class: 'question-skip',
+          onclick: () => submitQuestion(entry, true),
+        }, '跳过'),
+      ]),
+    ]),
+  ])
+}
+
+async function submitQuestion(entry, skip = false) {
+  const drafts = state.questionDrafts[entry.id] || {}
+  const answers = entry.questions.map((question) => {
+    const draft = drafts[question.id] || {}
+    if (skip) return { id: question.id, selected: [] }
+    const custom = (draft.custom || '').trim()
+    return {
+      id: question.id,
+      selected: Array.isArray(draft.selected) ? draft.selected : [],
+      ...(custom ? { custom } : {}),
+    }
+  })
   try {
+    await api(`/api/questions/${encodeURIComponent(entry.id)}`, { method: 'POST', body: { answers } })
+    delete state.questionDrafts[entry.id]
+    state.questions.pending = (state.questions.pending || []).filter((item) => item.id !== entry.id)
+    toast(skip ? '已跳过' : '已提交')
+    render()
+  } catch (error) {
+    toast('提交失败：' + error.message)
+  }
+}
+
+async function answerApproval(id, decision) {  try {
     await api(`/api/approvals/${encodeURIComponent(id)}`, { method: 'POST', body: { decision } })
     state.approvals.pending = (state.approvals.pending || []).filter((item) => item.id !== id)
     render()
@@ -1366,6 +1499,20 @@ function openStream(sessionId) {
       return
     }
     handleFrame(frame)
+  })
+  stream.addEventListener('questions', (event) => {
+    try {
+      const next = JSON.parse(event.data)
+      const before = (state.questions?.pending || []).map((item) => item.id).join(',')
+      state.questions = next
+      const after = (next.pending || []).map((item) => item.id).join(',')
+      if (before !== after) {
+        // Only a change of *which* question is open needs a repaint; an answer
+        // that is mid-typing must not be interrupted by a re-render.
+        if ((next.pending || []).length) toast('电脑上在等你回答一个问题')
+        render()
+      }
+    } catch {}
   })
   stream.addEventListener('approvals', (event) => {
     try {
