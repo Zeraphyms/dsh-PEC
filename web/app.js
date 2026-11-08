@@ -515,6 +515,24 @@ function chatRows() {
   let turnStartedAt = null
   let lastAssistantColumn = null
 
+  // Pair every tool call with its result up front: a re-render has to show the
+  // call's real outcome, not the "running" state it was created with.
+  const resultsByCall = new Map()
+  let lastTurnEndSeq = null
+  for (const event of state.events) {
+    if (event?.type === 'tool/result') {
+      const callId = event.data?.message?.toolCallId
+      if (callId) resultsByCall.set(callId, event)
+    }
+    if (event?.type === 'turn/end' && event.seq != null) {
+      if (lastTurnEndSeq == null || event.seq > lastTurnEndSeq) lastTurnEndSeq = event.seq
+    }
+  }
+  // A call inside a finished turn whose result never arrived (pruned or lost)
+  // is not still running; say so instead of a stuck spinner label.
+  const silentlyFinished = (callSeq) =>
+    callSeq != null && lastTurnEndSeq != null && callSeq < lastTurnEndSeq
+
   if (state.hasMore && state.events.length) rows.push(loadEarlierRow())
 
   for (const event of state.events) {
@@ -561,13 +579,10 @@ function chatRows() {
       continue
     }
     if (event.type === 'tool/call') {
-      rows.push(toolRow(event.data))
+      rows.push(toolRow(event.data, resultsByCall.get(event.data?.callId), silentlyFinished(event.seq)))
       continue
     }
-    if (event.type === 'tool/result') {
-      attachToolResult(event.data)
-      continue
-    }
+    if (event.type === 'tool/result') continue
     if (event.type === 'turn/end' && event.data?.reason?.kind === 'error') {
       rows.push(el('div', { class: 'row note' }, [
         el('div', { class: 'note-pill', text: '本回合出错：' + (event.data.reason.error?.message || '未知错误') }),
@@ -751,16 +766,29 @@ function reasoningNode(text) {
   ])
 }
 
-function toolRow(data) {
+function toolRow(data, result, ended) {
   const name = data?.name || 'tool'
   let args = data?.arguments || ''
   try {
     args = JSON.stringify(JSON.parse(args), null, 1)
   } catch {}
-  const status = el('span', { class: 'tool-status', text: '运行中' })
-  const body = el('div', { class: 'tool-body', text: args.slice(0, 4000) })
+  const failed = Boolean(result?.data?.error) || Boolean(result?.data?.message?.isError)
+  const finished = Boolean(result) || Boolean(ended)
+  const status = el('span', {
+    class: `tool-status${result ? (failed ? ' err' : ' ok') : ''}`,
+    text: result ? (failed ? '失败' : '完成') : (ended ? '已结束' : '运行中'),
+  })
+  // Finished calls show their output instead of the arguments.
+  const output = finished
+    ? (textOf(result?.data?.message?.content) || String(result?.data?.error?.reason || ''))
+    : ''
+  const body = el('div', { class: 'tool-body', text: (finished && output ? (failed ? '错误：' : '') + output : args).slice(0, 6000) })
   // Collapsed like the desktop transcript; open while the call is running.
-  const card = el('details', { class: 'tool', open: 'open', dataset: { callId: data?.callId || '' } }, [
+  const card = el('details', {
+    class: 'tool',
+    ...(finished ? {} : { open: 'open' }),
+    dataset: { callId: data?.callId || '' },
+  }, [
     el('summary', { class: 'tool-head' }, [el('span', { class: 'tool-name', text: name }), status]),
     body,
   ])
