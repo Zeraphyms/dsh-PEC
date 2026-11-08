@@ -542,6 +542,7 @@ function chatRows() {
   let lastAssistant = null
   let turnStartedAt = null
   let lastAssistantColumn = null
+  let turnUsage = null
 
   // Pair every tool call with its result up front: a re-render has to show the
   // call's real outcome, not the "running" state it was created with.
@@ -571,6 +572,7 @@ function chatRows() {
     if (event.type === 'turn/start') {
       turnStartedAt = event.time || null
       lastAssistantColumn = null
+      turnUsage = { tokens: 0, input: 0, cache: 0 }
       continue
     }
     if (event.type === 'user/message') {
@@ -595,6 +597,17 @@ function chatRows() {
       const message = event.data?.message
       const text = textOf(message?.content)
       const reasoning = reasoningOf(message?.content)
+      // Token usage rides on each assistant message; the turn's figure is their sum.
+      // `tok` counts what the turn actually sent and received (input + output);
+      // cached prompt reads are reported as the hit rate instead, so the number
+      // stays comparable with the desktop footer.
+      if (event.data?.usage) {
+        const usage = event.data.usage
+        turnUsage = turnUsage || { tokens: 0, input: 0, cache: 0 }
+        turnUsage.tokens += (Number(usage.inputTokens) || 0) + (Number(usage.outputTokens) || 0)
+        turnUsage.input += Number(usage.inputTokens) || 0
+        turnUsage.cache += Number(usage.cacheReadTokens) || 0
+      }
       if (!text && !reasoning) continue
       const bubble = el('div', { class: 'bubble' }, [
         reasoning ? reasoningNode(reasoning) : null,
@@ -621,17 +634,33 @@ function chatRows() {
       rows.push(el('div', { class: 'row note' }, [el('div', { class: 'note-pill', text: '已停止' })]))
     }
     if (event.type === 'turn/end') {
-      // The duration sits under the answer it belongs to, bottom-left.
+      // Duration, tokens and cache hit rate sit under the answer they measure.
+      const parts = []
       if (turnStartedAt && event.time && event.time >= turnStartedAt) {
-        const label = elapsedLabel(event.time - turnStartedAt)
+        parts.push(`本轮用时 ${elapsedLabel(event.time - turnStartedAt)}`)
+      }
+      if (turnUsage && turnUsage.tokens > 0) {
+        parts.push(`${tokenCount(turnUsage.tokens)} tok`)
+        const prompt = turnUsage.input + turnUsage.cache
+        if (prompt > 0) {
+          const rate = (turnUsage.cache / prompt) * 100
+          // Keep one decimal near the top, but never print a rounded 100.0%:
+          // a fully cached prompt still had some uncached tail.
+          const shown = rate >= 99.95 ? '99.9' : rate >= 99.5 ? rate.toFixed(1) : String(Math.round(rate))
+          parts.push(`缓存命中 ${shown}%`)
+        }
+      }
+      if (parts.length) {
+        const text = parts.join(' · ')
         if (lastAssistantColumn) {
-          lastAssistantColumn.append(el('div', { class: 'turn-meta', text: `本轮用时 ${label}` }))
+          lastAssistantColumn.append(el('div', { class: 'turn-meta', text }))
         } else {
-          rows.push(el('div', { class: 'row note' }, [el('div', { class: 'note-pill', text: `本轮用时 ${label}` })]))
+          rows.push(el('div', { class: 'row note' }, [el('div', { class: 'note-pill', text })]))
         }
       }
       turnStartedAt = null
       lastAssistantColumn = null
+      turnUsage = null
     }
   }
 
@@ -667,6 +696,14 @@ function chatRows() {
 
   if (rows.length === 0) rows.push(emptyChat())
   return rows
+}
+
+/** 812 / 12.4k / 3.9M — compact token counts like the desktop footer. */
+function tokenCount(value) {
+  const n = Number(value) || 0
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1).replace(/\.0$/, '')}M`
+  if (n >= 1000) return `${(n / 1000).toFixed(1).replace(/\.0$/, '')}k`
+  return String(n)
 }
 
 /** "12 秒" / "3 分 05 秒" / "1 小时 02 分" for a turn's wall-clock time. */
