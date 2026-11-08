@@ -49,6 +49,19 @@ netsh advfirewall firewall add rule name="cc-dsh discovery" dir=in action=allow 
 
 排查顺序：在电脑上 `curl.exe http://<局域网IP>:7317/api/ping` 能通 → 说明监听正常，问题在防火墙或路由器；仍不通 → 看端口有没有被占用。
 
+**如果放行了端口还是连不上**，检查有没有针对 DSH 本体的「阻止」规则——防火墙里 **Block 规则优先于 Allow**，一条 Block 就能把端口规则全废掉：
+
+```powershell
+Get-NetFirewallRule -Enabled True -Direction Inbound -Action Block |
+  Where-Object { $_.DisplayName -match 'DeepSeek' } |
+  Select-Object DisplayName, Profile
+
+# 确认是误拦后禁用（可随时再启用）
+Get-NetFirewallRule -Enabled True -Direction Inbound -Action Block |
+  Where-Object { $_.DisplayName -match 'DeepSeek' } |
+  Set-NetFirewallRule -Enabled False
+```
+
 ## 4. 配手机
 
 1. 手机装 Release 里的 APK；
