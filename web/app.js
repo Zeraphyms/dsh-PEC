@@ -60,6 +60,7 @@ const state = {
   current: null,
   events: [],
   snapshotAt: null,
+  turnStartedAt: null,  // start time of the running turn, for the live clock
   cursor: null,        // inclusive log cut from the opening snapshot
   hasMore: false,      // older history available on the host
   preserveScroll: null, // distance from the bottom to keep while prepending
@@ -507,6 +508,33 @@ function renderChat() {
       try { field.setSelectionRange(end, end) } catch { /* not selectable */ }
     }
   }
+  ensureTurnClock()
+}
+
+/* A running turn shows a ticking clock; the element is re-created on every
+ * render, so the interval only rewrites its text and clears itself once the
+ * element is gone. */
+let turnClockTimer = null
+
+function ensureTurnClock() {
+  const node = document.getElementById('turn-clock')
+  if (!node || !state.turnStartedAt) {
+    if (turnClockTimer) {
+      clearInterval(turnClockTimer)
+      turnClockTimer = null
+    }
+    return
+  }
+  if (turnClockTimer) return
+  turnClockTimer = setInterval(() => {
+    const clock = document.getElementById('turn-clock')
+    if (!clock || !state.turnStartedAt) {
+      clearInterval(turnClockTimer)
+      turnClockTimer = null
+      return
+    }
+    clock.textContent = `已用时 ${elapsedLabel(Date.now() - state.turnStartedAt)}`
+  }, 1000)
 }
 
 function chatRows() {
@@ -610,6 +638,19 @@ function chatRows() {
   // Tool calls already rendered inline; append their result cards in order.
   for (const card of state.toolResults.values()) {
     if (card.parent && !card.parent.isConnected) rows.push(card.parent)
+  }
+
+  // A turn that is still running gets a live clock; ensureTurnClock() ticks it.
+  if (state.current?.running && state.turnStartedAt) {
+    rows.push(
+      el('div', { class: 'row' }, [
+        el('div', {
+          class: 'turn-meta',
+          id: 'turn-clock',
+          text: `已用时 ${elapsedLabel(Date.now() - state.turnStartedAt)}`,
+        }),
+      ]),
+    )
   }
 
   if (state.live && (state.live.text || state.live.reasoning)) {
@@ -1324,6 +1365,7 @@ function handleFrame(frame) {
     // The last turn/end in the window outranks a stale summary row.
     const lastTurnEnd = [...state.events].reverse().find((event) => event.type === 'turn/end' || event.type === 'turn/start')
     state.current.running = lastTurnEnd ? lastTurnEnd.type === 'turn/start' : Boolean(state.current.running)
+    state.turnStartedAt = lastTurnEnd && lastTurnEnd.type === 'turn/start' ? lastTurnEnd.time || null : null
     syncRunningUi()
     if (state.view === 'chat') render()
     return
@@ -1356,8 +1398,14 @@ function handleFrame(frame) {
     if (event.type === 'permission/preset' && event.data?.preset) {
       state.current.permission = event.data.preset
     }
-    if (event.type === 'turn/start') state.current.running = true
-    if (event.type === 'turn/end') state.current.running = false
+    if (event.type === 'turn/start') {
+      state.current.running = true
+      state.turnStartedAt = event.time || Date.now()
+    }
+    if (event.type === 'turn/end') {
+      state.current.running = false
+      state.turnStartedAt = null
+    }
     if (state.view === 'chat') {
       if (event.type === 'assistant/message' || event.type === 'user/message' || event.type === 'turn/end') {
         render()
@@ -1426,6 +1474,7 @@ async function openSession(id) {
   state.cursor = null
   state.hasMore = false
   state.preserveScroll = null
+  state.turnStartedAt = null
   state.live = null
   state.view = 'chat'
   localStorage.setItem('ccdsh_last_session', id)
