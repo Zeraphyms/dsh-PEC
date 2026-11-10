@@ -1,4 +1,5 @@
 /* dsh-PEC mobile client: talks to the dsh-PEC Host plugin on the PC. */
+import { emptyProgress, progressFromSnapshot, applyProgressEvent, applyGoalActivation, todoCounts, goalPhaseLabel } from './progress.js'
 
 const app = document.getElementById('app')
 const toastEl = document.getElementById('toast')
@@ -58,6 +59,8 @@ const state = {
   plugins: [],
   view: 'sessions',
   current: null,
+  progress: emptyProgress(),
+  tasksExpanded: false,
   events: [],
   snapshotAt: null,
   turnStartedAt: null,  // start time of the running turn, for the live clock
@@ -1099,6 +1102,86 @@ function clearDraft(sessionId) {
   } catch { /* private mode */ }
 }
 
+/* Status updates replace only this dock, preserving the input, focus and chat scroll. */
+function refreshProgressDock() {
+  const dock = document.getElementById('progress-dock')
+  if (!dock || state.view !== 'chat') return
+  const focused = dock.contains(document.activeElement)
+    ? document.activeElement.closest('button')?.classList.contains('progress-toggle') ? '.progress-toggle' : '.goal-status'
+    : null
+  const scrollTop = dock.querySelector('.progress-tasks')?.scrollTop || 0
+  const next = progressDock()
+  dock.replaceWith(next)
+  const list = next.querySelector('.progress-tasks')
+  if (list) list.scrollTop = scrollTop
+  if (focused) next.querySelector(focused)?.focus({ preventScroll: true })
+}
+
+function progressDock() {
+  const todos = state.progress.todos || []
+  const goal = state.progress.goal
+  const showGoal = goal && !['complete', 'completed', 'cleared'].includes(goal.phase)
+  const children = []
+  if (todos.length) {
+    const counts = todoCounts(todos)
+    const summary = `${counts.completed} 已完成 · ${counts.in_progress} 进行中 · ${counts.pending} 待处理`
+    const expanded = state.tasksExpanded
+    children.push(el('section', { class: 'task-status', 'aria-label': '任务清单' }, [
+      el('button', {
+        class: 'progress-toggle', type: 'button',
+        'aria-label': '任务，' + summary + (expanded ? '，收起清单' : '，展开清单'),
+        'aria-expanded': String(expanded), 'aria-controls': 'progress-tasks',
+        onclick: () => { state.tasksExpanded = !state.tasksExpanded; refreshProgressDock() },
+      }, [
+        el('span', { class: 'progress-glyph', 'aria-hidden': 'true', text: '☷' }),
+        el('span', { class: 'progress-title', text: '任务' }),
+        el('span', { class: 'progress-counts', text: summary }),
+        el('span', { class: 'progress-chevron', 'aria-hidden': 'true', text: expanded ? '⌃' : '⌄' }),
+      ]),
+      expanded ? el('ul', { id: 'progress-tasks', class: 'progress-tasks' }, todos.map((todo) =>
+        el('li', { class: 'progress-task ' + todo.status }, [
+          el('span', { class: 'task-mark', 'aria-hidden': 'true', text: todo.status === 'completed' ? '✓' : todo.status === 'in_progress' ? '◉' : '○' }),
+          el('span', { class: 'task-content', text: todo.content }),
+          el('span', { class: 'task-state', text: { completed: '已完成', in_progress: '进行中', pending: '待处理' }[todo.status] }),
+        ]))) : null,
+    ]))
+  }
+  if (showGoal) {
+    const label = goalPhaseLabel(goal)
+    children.push(el('button', {
+      class: 'goal-status ' + goal.phase, type: 'button',
+      'aria-label': label + '：' + goal.objective + '，查看详情',
+      onclick: openGoalPanel,
+    }, [
+      el('span', { class: 'progress-glyph', 'aria-hidden': 'true', text: '◎' }),
+      el('span', { class: 'goal-summary' }, [
+        el('span', { class: 'goal-label', text: label }),
+        el('span', { class: 'goal-objective', text: goal.objective }),
+        goal.phase === 'blocked' && goal.blockedReason?.message
+          ? el('span', { class: 'goal-blocker', text: goal.blockedReason.message }) : null,
+      ]),
+      el('span', { class: 'goal-rounds', text: goal.roundsStarted + ' / ' + (goal.maxGoalRounds || '∞') + ' 轮' }),
+      el('span', { class: 'progress-chevron', 'aria-hidden': 'true', text: '›' }),
+    ]))
+  }
+  return el('div', { id: 'progress-dock', class: 'progress-dock', hidden: !children.length }, children)
+}
+
+// Activation is runtime state rather than a durable log event. Match both the
+// session and goal revision so a late read cannot undo an edit, clear or switch.
+let goalActivationRead = 0
+async function refreshGoalActivation() {
+  const sessionId = state.current?.id
+  const goal = state.progress.goal
+  if (state.view !== 'chat' || !sessionId || !goal || goal.phase !== 'active') return
+  const read = ++goalActivationRead
+  try {
+    const data = await api('/api/goal?session=' + encodeURIComponent(sessionId))
+    if (read !== goalActivationRead || state.current?.id !== sessionId) return
+    if (applyGoalActivation(state.progress, { goal: data.goal })) refreshProgressDock()
+  } catch { /* the durable projection still shows the goal while offline */ }
+}
+
 function composerNode() {
   const sessionId = state.current?.id
   const draft = draftFor(sessionId)
@@ -1240,6 +1323,7 @@ function composerNode() {
   renderAttachments()
 
   return el('div', { class: 'composer-wrap' }, [
+    progressDock(),
     attachRow,
     picker,
     el('div', { class: 'composer-card' }, [
@@ -1492,6 +1576,7 @@ function openStream(sessionId) {
   state.stream = stream
 
   stream.addEventListener('frame', (event) => {
+    if (state.stream !== stream || state.current?.id !== sessionId) return
     let frame
     try {
       frame = JSON.parse(event.data)
@@ -1499,6 +1584,16 @@ function openStream(sessionId) {
       return
     }
     handleFrame(frame)
+  })
+  stream.addEventListener('goal-activation', (event) => {
+    if (state.stream !== stream || state.current?.id !== sessionId) return
+    try {
+      const update = JSON.parse(event.data)
+      if (update.sessionId === sessionId) {
+        goalActivationRead += 1
+        if (applyGoalActivation(state.progress, update)) refreshProgressDock()
+      }
+    } catch { /* a reconnect re-reads activation */ }
   })
   stream.addEventListener('questions', (event) => {
     try {
@@ -1549,6 +1644,8 @@ function handleFrame(frame) {
     if (!keptOlder) state.hasMore = Boolean(frame.hasMore)
     state.snapshotAt = state.current?.id || true
     const values = frame.projections?.values || {}
+    state.progress = progressFromSnapshot(frame)
+    refreshGoalActivation()
     if (values.title) state.current.title = values.title
     if (frame.header?.agentPreset) state.current.agentPreset = frame.header.agentPreset
     if (values.agentPreset) state.current.agentPreset = values.agentPreset
@@ -1583,6 +1680,8 @@ function handleFrame(frame) {
     const event = frame.event
     if (!event) return
     state.events.push(event)
+    if (applyProgressEvent(state.progress, event)) refreshProgressDock()
+    if (event.type === 'goal/change' || event.type === 'turn/end') refreshGoalActivation()
     if (event.type === 'assistant/message') {
       state.live = null
     }
@@ -1678,6 +1777,9 @@ function updateLive() {
 async function openSession(id) {
   const summary = state.sessions.find((session) => session.id === id)
   state.current = summary ? { ...summary } : { id, title: '' }
+  state.progress = emptyProgress()
+  goalActivationRead += 1
+  state.tasksExpanded = false
   state.events = []
   state.snapshotAt = null
   state.cursor = null
@@ -2621,6 +2723,7 @@ function openGoalPanel() {
   const phaseLabel = {
     active: '进行中',
     paused: '已暂停',
+    complete: '已完成',
     completed: '已完成',
     blocked: '受阻',
     cleared: '已清除',
@@ -2630,7 +2733,7 @@ function openGoalPanel() {
     view.body.replaceChildren(el('div', { class: 'empty', text: '读取中…' }))
     try {
       const data = await api(`/api/goal?session=${encodeURIComponent(sessionId)}`)
-      const goal = data.goal
+      const goal = data.goal || (!data.live && state.current?.id === sessionId ? state.progress.goal : null)
       if (!goal) {
         view.setTitle('目标', '无')
         view.body.replaceChildren(
@@ -2638,7 +2741,7 @@ function openGoalPanel() {
         )
         return
       }
-      view.setTitle('目标', phaseLabel[goal.phase] || goal.phase)
+      view.setTitle('目标', goal.phase === 'active' && goal.activation === 'disarmed' ? '待继续' : phaseLabel[goal.phase] || goal.phase)
       const action = (label, name, ghost = false) =>
         el('button', {
           class: 'chip' + (ghost ? '' : ' on'),
@@ -2654,12 +2757,12 @@ function openGoalPanel() {
         }, [label])
 
       const actions = []
-      if (goal.phase === 'active') {
-        actions.push(action('暂停', 'pause'))
+      if (data.live && goal.phase === 'active') {
+        actions.push(goal.activation === 'disarmed' ? action('继续', 'resume') : action('暂停', 'pause'))
         actions.push(action('标记完成', 'complete'))
       }
-      if (goal.phase === 'paused' || goal.phase === 'blocked') actions.push(action('继续', 'resume'))
-      actions.push(action('清除', 'clear', true))
+      if (data.live && (goal.phase === 'paused' || goal.phase === 'blocked')) actions.push(action('继续', 'resume'))
+      if (data.live) actions.push(action('清除', 'clear', true))
 
       view.body.replaceChildren(
         el('div', { class: 'tool', style: 'margin:0 0 12px' }, [
@@ -2667,13 +2770,13 @@ function openGoalPanel() {
             el('span', { class: 'tool-name', text: phaseLabel[goal.phase] || goal.phase }),
             el('span', { class: 'tool-status', text: `${goal.roundsStarted ?? 0} / ${goal.maxGoalRounds || '∞'} 轮` }),
           ]),
-          el('div', { class: 'tool-body', style: 'max-height:none;color:#dbe6fb' }, [goal.objective]),
+          el('div', { class: 'tool-body', style: 'max-height:none' }, [goal.objective]),
           goal.blockedReason?.message
             ? el('div', { class: 'tool-body', style: 'color:#ffb4b4' }, ['受阻：' + goal.blockedReason.message])
             : null,
         ]),
         el('div', { style: 'display:flex;gap:8px;flex-wrap:wrap' }, actions),
-        el('div', { class: 'small', style: 'margin-top:12px', text: '目标会在电脑上自动续跑；暂停或清除后不再自动继续。' }),
+        el('div', { class: 'small', style: 'margin-top:12px', text: data.live ? '目标会在电脑上自动续跑；暂停或清除后不再自动继续。' : '会话尚未在电脑上运行，当前显示已保存的目标。' }),
       )
     } catch (error) {
       view.body.replaceChildren(el('div', { class: 'empty', text: '读取失败：' + error.message }))
@@ -3137,7 +3240,11 @@ function openSettingsPanel() {
 /* ------------------------------------------------------------------ go */
 
 boot()
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) refreshGoalActivation()
+})
 setInterval(() => {
+  if (!document.hidden) refreshGoalActivation()
   if (state.view === 'sessions' && !document.hidden) {
     // keep the list fresh without a full reload
     api('/api/bootstrap')

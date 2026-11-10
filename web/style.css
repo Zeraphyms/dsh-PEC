@@ -545,6 +545,47 @@ a { color: var(--dsw-brand); text-decoration: none; }
   line-height: 1.55;
 }
 
+/* ------------------------------------------------------- task / goal dock */
+.progress-dock { display: grid; gap: 6px; margin-bottom: 8px; }
+.progress-dock[hidden] { display: none; }
+.task-status, .goal-status {
+  border: 1px solid var(--dsw-border-l2);
+  border-radius: var(--radius-md);
+  background: var(--dsw-bg-layer-1);
+  overflow: hidden;
+}
+.progress-toggle, .goal-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 42px;
+  padding: 8px 10px;
+  text-align: left;
+  font-size: var(--fs-meta);
+}
+.progress-toggle:active, .goal-status:active { background: var(--dsw-bg-platform); }
+.progress-glyph { flex: 0 0 16px; color: var(--dsw-label-tertiary); text-align: center; }
+.progress-title { flex: 0 0 auto; font-weight: 600; }
+.progress-counts { flex: 1; min-width: 0; color: var(--dsw-label-secondary); font-size: var(--fs-caption); }
+.progress-chevron { flex: 0 0 auto; color: var(--dsw-label-tertiary); }
+.progress-tasks { list-style: none; margin: 0; padding: 0 10px 8px; max-height: 24dvh; overflow-y: auto; }
+.progress-task { display: flex; align-items: flex-start; gap: 8px; padding: 7px 0; border-top: 1px solid var(--dsw-border-l1); font-size: var(--fs-meta); }
+.task-mark { flex: 0 0 16px; color: var(--dsw-label-tertiary); }
+.progress-task.in_progress .task-mark, .progress-task.in_progress .task-state { color: var(--dsw-brand); }
+.progress-task.completed .task-mark { color: var(--dsw-success); }
+.progress-task.completed .task-content { color: var(--dsw-label-tertiary); }
+.task-content { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.task-state { flex: 0 0 auto; font-size: var(--fs-caption); color: var(--dsw-label-tertiary); }
+.goal-summary { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 1px; }
+.goal-label { color: var(--dsw-label-secondary); font-size: var(--fs-caption); }
+.goal-objective { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.goal-rounds { flex: 0 0 auto; color: var(--dsw-label-tertiary); font-size: var(--fs-caption); white-space: nowrap; }
+.goal-blocker { color: var(--dsw-warn); font-size: var(--fs-caption); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.goal-status.blocked .progress-glyph { color: var(--dsw-warn); }
+.composer-wrap { flex-shrink: 0; }
+.chat { min-height: 0; }
+
 /* ---------------------------------------------------------------- composer */
 .composer-wrap {
   border-top: 1px solid var(--dsw-border-l1);
