@@ -91,13 +91,13 @@ ERR_PNPM_TARBALL_INTEGRITY  tarball integrity doesn't match the one in the lockf
 
 ## 开发者：本地更新已发布版本
 
-仓库带 `scripts/sync-local.ps1`：发布新版本后，把本机已安装的插件升到该版本并重载网关，不用在 DSH 界面里手动更新：
+仓库带 `scripts/sync-local.ps1`：发布新版本后，把本机已安装的插件升到该版本并**热重载**（不用重启 DSH）：
 
 ```powershell
-pwsh ./scripts/sync-local.ps1 -Version v2.0.2
+pwsh ./scripts/sync-local.ps1 -Version v2.0.3
 ```
 
-它会固定 profile 依赖到该 tag、pnpm 更新、清掉残留的禁用标记并等待网关恢复。
+它会固定 profile 依赖到该 tag、pnpm 更新，然后通过「禁用 → 清除禁用标记」触发 DSH 热重载，等待网关恢复并自检 `/api/health`。
 
 ## 5. 可选：终端面板
 

@@ -34,17 +34,36 @@ if ($manifest.dependencies.'dsh-pec' -ne $specifier) {
 Push-Location $ProfileDir
 try { pnpm update dsh-pec 2>&1 | Select-Object -Last 3 } finally { Pop-Location }
 
-# 3) Clear a leftover disabled flag so the gateway remounts.
+# 3) Reload the plugin without restarting DSH. The reliable trigger cycle is:
+#    toggle OFF (gateway writes "disabled: true" into the patch and stops) ->
+#    remove that flag (a semantic patch change) -> DSH hot-reloads with the
+#    new files and the gateway returns.
 $patch = Join-Path $ProfileDir 'cordis.patch.yml'
-$lines = Get-Content $patch
-for ($i = 1; $i -lt $lines.Count; $i++) {
-  if ($lines[$i] -match '^\s*disabled:\s*true\s*$' -and $lines[$i - 1] -match 'id: dsh-pec') {
-    $next = $lines[0..($i - 1)] + $lines[($i + 1)..($lines.Count - 1)]
-    Set-Content $patch $next -Encoding UTF8
-    Write-Host 'cleared disabled flag on the dsh-pec row'
-    break
+
+function Clear-PecDisabledFlag {
+  $lines = Get-Content $patch
+  for ($i = 1; $i -lt $lines.Count; $i++) {
+    if ($lines[$i] -match '^\s*disabled:\s*true\s*$' -and $lines[$i - 1] -match 'id: dsh-pec') {
+      $next = $lines[0..($i - 1)] + $lines[($i + 1)..($lines.Count - 1)]
+      Set-Content $patch $next -Encoding UTF8
+      Write-Host 'cleared disabled flag - DSH will hot-reload the plugin'
+      return $true
+    }
   }
+  return $false
 }
+
+# 3a) Ask the running gateway to disable itself. It writes the flag and stops,
+#     so the request itself may hang or fail - that is expected.
+try {
+  Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/plugins/include%3Adsh-pec/toggle" -Method Post -Body '{"enabled":false}' -ContentType 'application/json' -TimeoutSec 3 | Out-Null
+} catch { Write-Host 'gateway closing (expected)' }
+Start-Sleep -Seconds 2
+
+# 3b) If the flag was written, clear it to trigger the hot reload. Otherwise
+#     (gateway already stopped without the flag) clear a stale one.
+Clear-PecDisabledFlag | Out-Null
+Clear-PecDisabledFlag | Out-Null
 
 # 4) Wait for the gateway and verify.
 for ($attempt = 1; $attempt -le 10; $attempt++) {
