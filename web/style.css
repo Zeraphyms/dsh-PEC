@@ -1026,6 +1026,48 @@ a { color: var(--dsw-brand); text-decoration: none; }
 }
 .switch.on::after { transform: translateX(18px); }
 
+/* ------------------------------------------------------- queue dock */
+/* Pending (queued) messages, matching the desktop queue dock: one row per
+   message with edit / remove / steer-send actions. */
+.queue-dock { margin: 6px 2px 0; }
+.queue-head { padding: 0 4px 6px; color: var(--dsw-label-secondary); font-size: var(--fs-caption); }
+.queue-list { list-style: none; margin: 0; padding: 0; }
+.queue-item { margin-bottom: 8px; }
+.queue-row, .queue-edit {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border-radius: var(--radius-md);
+  background: var(--dsw-bg-layer-1);
+  border: 1px solid var(--dsw-border-l2);
+}
+.queue-edit { flex-direction: column; align-items: stretch; }
+.queue-text { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
+.queue-badge {
+  flex: 0 0 auto;
+  font-size: var(--fs-caption);
+  color: var(--dsw-brand);
+  background: var(--dsw-brand-soft);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+.queue-preview { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-meta); }
+.queue-actions { display: flex; gap: 6px; flex: 0 0 auto; }
+.queue-actions .chip { padding: 5px 10px; }
+.queue-edit-input {
+  width: 100%;
+  resize: vertical;
+  min-height: 56px;
+  padding: 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--dsw-border-l3);
+  background: var(--dsw-bg-platform);
+  color: var(--dsw-label-primary);
+  font-size: var(--fs-meta);
+}
+.queue-edit-actions { display: flex; gap: 8px; justify-content: flex-end; }
+
 /* ---------------------------------------------------------------- xterm */
 .xterm-host {
   flex: 1;

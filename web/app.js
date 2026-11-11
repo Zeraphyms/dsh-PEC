@@ -65,6 +65,8 @@ const state = {
   tasksExpanded: false,
   collapsedWorkspaces: [],
   stats: null, // 桌面同款会话统计（轮/步、tok/s、总 tok、缓存命中、上下文）
+  inbox: { 'next-turn': [], 'next-step': [] },
+  queueEditing: null, // {id, text} 正在编辑的排队消息
   events: [],
   snapshotAt: null,
   turnStartedAt: null,  // start time of the running turn, for the live clock
@@ -1270,6 +1272,87 @@ function sessionStatsBar() {
   if (!parts.length) return null
   return el('div', { class: 'stats-bar' }, parts.map((part) =>
     el('span', { class: 'stats-item' }, [svg(part.icon, 12), el('span', { text: part.text })])))
+}
+
+/** Flatten the Host inbox into queue rows with their delivery target. */
+function queueRows() {
+  const inbox = state.inbox || { 'next-turn': [], 'next-step': [] }
+  return [
+    ...(inbox['next-turn'] || []).map((message) => ({ ...message, target: 'next-turn' })),
+    ...(inbox['next-step'] || []).map((message) => ({ ...message, target: 'next-step' })),
+  ].filter((message) => message && typeof message.id === "string")
+}
+
+/** Queue dock: pending messages with edit / remove / steer-send, like the desktop. */
+function queueDock() {
+  const rows = queueRows()
+  if (!rows.length) return null
+  const editing = state.queueEditing
+  const children = []
+  if (rows.length > 1) {
+    children.push(el('div', { class: 'queue-head' }, [
+      el('span', { class: 'queue-title', text: rows.length + ' 条排队消息' }),
+    ]))
+  }
+  const listVisible = rows.length === 1 || Boolean(editing) || state.queueExpanded
+  const list = el('ul', { class: 'queue-list', hidden: !listVisible }, rows.map((row) => {
+    const text = textOf(row.content)
+    const isEditing = editing?.id === row.id
+    return el('li', { class: 'queue-item' }, [
+      isEditing
+        ? el('div', { class: 'queue-edit' }, [
+            el('textarea', {
+              class: 'queue-edit-input',
+              value: editing.text,
+              'aria-label': '编辑排队消息',
+              rows: 2,
+              oninput: (event) => { editing.text = event.target.value },
+              onkeydown: (event) => {
+                if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+                  event.preventDefault()
+                  event.target.closest('.queue-edit').querySelector('[data-save]').click()
+                }
+                if (event.key === 'Escape') {
+                  state.queueEditing = null
+                  render()
+                }
+              },
+            }),
+            el('div', { class: 'queue-edit-actions' }, [
+              el('button', { class: 'chip on', 'data-save': '', onclick: () => queueApply(row.id, { kind: 'edit', content: [{ type: 'text', text: editing.text }] }, '编辑失败：这条消息可能已经开始发送。') }, '保存'),
+              el('button', { class: 'chip', onclick: () => { state.queueEditing = null; render() } }, '取消'),
+            ]),
+          ])
+        : el('div', { class: 'queue-row' }, [
+            el('div', { class: 'queue-text' }, [
+              el('span', { class: 'queue-badge', text: row.target === 'next-step' ? '本步' : '下轮' }),
+              el('span', { class: 'queue-preview', text: text || '（图片）' }),
+            ]),
+            el('div', { class: 'queue-actions' }, [
+              el('button', { class: 'chip', title: '编辑排队消息', 'aria-label': '编辑排队消息', onclick: () => { state.queueEditing = { id: row.id, text } ; render() } }, '编辑'),
+              el('button', { class: 'chip', title: '删除排队消息', 'aria-label': '删除排队消息', onclick: () => queueApply(row.id, { kind: 'remove' }, '删除失败：这条消息可能已经开始发送。') }, '删除'),
+              el('button', { class: 'chip on', title: '插话发送（打断当前步骤）', 'aria-label': '插话发送', onclick: () => queueApply(row.id, { kind: 'steer' }, '插话发送失败：当前轮已结束，请直接发送。') }, '插话发送'),
+            ]),
+          ]),
+    ])
+  }))
+  children.push(list)
+  return el('div', { class: 'queue-dock' }, children)
+}
+
+/** Apply one queue mutation, then refresh the transcript and dock. */
+async function queueApply(itemId, action, failureMessage) {
+  try {
+    await api('/api/sessions/' + encodeURIComponent(state.current.id) + '/queue/' + encodeURIComponent(itemId), { method: 'POST', body: action })
+    state.queueEditing = null
+    // The next snapshot rebuilds state.inbox; pull it now so the dock and the
+    // transcript agree without waiting for the next reconnect.
+    const page = await api('/api/sessions/' + encodeURIComponent(state.current.id))
+    handleFrame({ type: 'snapshot', ...page })
+    render()
+  } catch (error) {
+    toast(failureMessage || error.message)
+  }
 }
 
 function composerNode() {

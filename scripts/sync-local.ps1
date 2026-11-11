@@ -1,13 +1,16 @@
 # Update the locally installed dsh-pec plugin from a released tag, then reload
 # the gateway. Run AFTER pushing a release:
 #
-#   pwsh ./scripts/sync-local.ps1 [-ProfileDir <dir>] [-Version v2.0.2]
+#   pwsh ./scripts/sync-local.ps1 [-ProfileDir <dir>] [-Version v2.0.3]
 #
 # What it does:
 #   1. Pins the profile dependency to the given tag (profile package.json).
 #   2. Runs pnpm update so node_modules picks up the released tarball.
-#   3. Clears a leftover "disabled: true" flag on the plugin row if present.
-#   4. Waits for the gateway to come back and verifies /api/health.
+#   3. Reloads the plugin without restarting DSH:
+#        toggle OFF (gateway writes "disabled: true" and stops)
+#        -> clear that flag (a semantic patch change)
+#        -> DSH hot-reloads the plugin with the new files.
+#   4. Waits for the gateway and verifies /api/health.
 #
 # NOTE: do NOT run this while developing - changes in the repo only reach the
 # installed plugin when you explicitly release and run this script.
@@ -34,36 +37,22 @@ if ($manifest.dependencies.'dsh-pec' -ne $specifier) {
 Push-Location $ProfileDir
 try { pnpm update dsh-pec 2>&1 | Select-Object -Last 3 } finally { Pop-Location }
 
-# 3) Reload the plugin without restarting DSH. The reliable trigger cycle is:
-#    toggle OFF (gateway writes "disabled: true" into the patch and stops) ->
-#    remove that flag (a semantic patch change) -> DSH hot-reloads with the
-#    new files and the gateway returns.
+# 3) Reload cycle: disable via the running gateway, then clear the flag.
 $patch = Join-Path $ProfileDir 'cordis.patch.yml'
 
-function Clear-PecDisabledFlag {
-  $lines = Get-Content $patch
-  for ($i = 1; $i -lt $lines.Count; $i++) {
-    if ($lines[$i] -match '^\s*disabled:\s*true\s*$' -and $lines[$i - 1] -match 'id: dsh-pec') {
-      $next = $lines[0..($i - 1)] + $lines[($i + 1)..($lines.Count - 1)]
-      Set-Content $patch $next -Encoding UTF8
-      Write-Host 'cleared disabled flag - DSH will hot-reload the plugin'
-      return $true
-    }
-  }
-  return $false
-}
-
-# 3a) Ask the running gateway to disable itself. It writes the flag and stops,
-#     so the request itself may hang or fail - that is expected.
 try {
   Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/plugins/include%3Adsh-pec/toggle" -Method Post -Body '{"enabled":false}' -ContentType 'application/json' -TimeoutSec 3 | Out-Null
 } catch { Write-Host 'gateway closing (expected)' }
 Start-Sleep -Seconds 2
 
-# 3b) If the flag was written, clear it to trigger the hot reload. Otherwise
-#     (gateway already stopped without the flag) clear a stale one.
-Clear-PecDisabledFlag | Out-Null
-Clear-PecDisabledFlag | Out-Null
+$lines = [System.IO.File]::ReadAllLines($patch)
+$out = @()
+for ($i = 0; $i -lt $lines.Count; $i++) {
+  $isFlag = $lines[$i] -match '^\s*disabled:\s*true\s*$' -and $i -gt 0 -and $lines[$i - 1] -match 'id: dsh-pec'
+  if (-not $isFlag) { $out += $lines[$i] }
+}
+[System.IO.File]::WriteAllLines($patch, $out)
+Write-Host 'cleared disabled flag - DSH will hot-reload the plugin'
 
 # 4) Wait for the gateway and verify.
 for ($attempt = 1; $attempt -le 10; $attempt++) {
