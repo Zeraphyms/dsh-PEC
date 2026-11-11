@@ -1,6 +1,7 @@
 /* dsh-PEC mobile client: talks to the dsh-PEC Host plugin on the PC. */
 import { emptyProgress, progressFromSnapshot, applyProgressEvent, applyGoalActivation, composerAction, todoCounts, goalPhaseLabel } from './progress.js'
 import { matchModel, isSelectedModel } from './models.js'
+import { groupSessionsByWorkspace, toggleWorkspace } from './groups.js'
 
 const app = document.getElementById('app')
 const toastEl = document.getElementById('toast')
@@ -62,6 +63,7 @@ const state = {
   current: null,
   progress: emptyProgress(),
   tasksExpanded: false,
+  collapsedWorkspaces: [],
   stats: null, // 桌面同款会话统计（轮/步、tok/s、总 tok、缓存命中、上下文）
   events: [],
   snapshotAt: null,
@@ -437,7 +439,30 @@ function renderSessions() {
     ]),
     ...(sessions.length === 0
       ? [el('div', { class: 'empty', text: query ? '没有匹配的会话' : '还没有会话，点右下角新建一个' })]
-      : sessions.map(sessionRow)),
+      : query
+        // While searching, a flat list crosses group boundaries.
+        ? sessions.map(sessionRow)
+        : groupSessionsByWorkspace(sessions, state.workspaces).flatMap((group) => {
+            const title = group.workspace?.title || '其他'
+            const collapsed = (state.collapsedWorkspaces || []).includes(title)
+            return [
+              el('button', {
+                class: 'ws-group' + (collapsed ? ' collapsed' : ''),
+                type: 'button',
+                'aria-expanded': String(!collapsed),
+                onclick: () => {
+                  state.collapsedWorkspaces = toggleWorkspace(state.collapsedWorkspaces, title)
+                  renderSessions()
+                },
+              }, [
+                svg(ICON.folder, 16),
+                el('span', { class: 'ws-title', text: title }),
+                el('span', { class: 'ws-count', text: String(group.sessions.length) }),
+                el('span', { class: 'ws-chevron', 'aria-hidden': 'true', text: collapsed ? '⌄' : '⌃' }),
+              ]),
+              ...(collapsed ? [] : group.sessions.map(sessionRow)),
+            ]
+          })),
     ...(hiddenBlanks >= 5
       ? [el('button', {
           class: 'cleanup-link',
@@ -486,7 +511,6 @@ function sessionRow(session) {
       el('div', { class: `title${session.title ? '' : ' blank'}`, text: title }),
       el('div', { class: 'meta' }, [
         el('span', { text: ago(session.updatedAt) }),
-        session.cwd ? el('span', { class: 'tag', text: shortPath(session.cwd) }) : null,
         session.running ? el('span', { class: 'tag', text: '运行中' }) : null,
       ]),
     ]),

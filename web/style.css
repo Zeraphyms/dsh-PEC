@@ -194,6 +194,28 @@ a { color: var(--dsw-brand); text-decoration: none; }
 .icon-btn:active { background: var(--dsw-bg-platform); }
 .icon-btn.on { color: var(--dsw-brand); background: var(--dsw-brand-soft); }
 
+/* ------------------------------------------------------- workspace groups */
+.ws-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 8px;
+  margin-top: 8px;
+  border-radius: var(--radius-sm);
+  color: var(--dsw-label-secondary);
+  font-size: var(--fs-ui);
+  text-align: left;
+  transition: background var(--ds-transition-duration-fast, .1s) ease;
+}
+.ws-group:active { background: var(--dsw-bg-platform); }
+.ws-group svg { flex: 0 0 16px; color: var(--dsw-label-tertiary); }
+.ws-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.ws-count { flex: 0 0 auto; font-size: var(--fs-caption); color: var(--dsw-label-tertiary); }
+.ws-chevron { flex: 0 0 auto; font-size: 12px; color: var(--dsw-label-tertiary); }
+/* Grouped session rows indent under their folder header. */
+.ws-group + .session { border-top: 0; }
+
 /* ---------------------------------------------------------------- sessions */
 .list {
   flex: 1;
