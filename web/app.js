@@ -1,5 +1,6 @@
 /* dsh-PEC mobile client: talks to the dsh-PEC Host plugin on the PC. */
 import { emptyProgress, progressFromSnapshot, applyProgressEvent, applyGoalActivation, composerAction, todoCounts, goalPhaseLabel } from './progress.js'
+import { matchModel, isSelectedModel } from './models.js'
 
 const app = document.getElementById('app')
 const toastEl = document.getElementById('toast')
@@ -1409,14 +1410,7 @@ function hintChips() {
 }
 
 function currentModel() {
-  const selection = state.current?.model || state.models.default
-  if (!selection) return null
-  for (const group of state.models.groups) {
-    for (const model of group.models) {
-      if (model.id === selection.model) return { ...model, provider: group.id }
-    }
-  }
-  return { id: selection.model, name: selection.model, provider: selection.provider }
+  return matchModel(state.models.groups, state.current?.model || state.models.default)
 }
 
 function modelLabel() {
@@ -2212,7 +2206,7 @@ function modelSheet(close) {
   for (const group of state.models.groups) {
     rows.push(el('h2', { text: group.name }))
     for (const model of group.models) {
-      const selected = selection && selection.model === model.id
+      const selected = isSelectedModel(group.id, model.id, selection)
       const efforts = model.reasoning?.efforts || []
       // Tapping the model itself picks the highest effort tier when the model
       // has one: an unselected effort would otherwise fall through to the
