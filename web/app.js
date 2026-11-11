@@ -1434,9 +1434,9 @@ function composerNode() {
 
   renderAttachments()
 
+  const stats = sessionStatsBar()
   return el('div', { class: 'composer-wrap' }, [
     progressDock(),
-    sessionStatsBar() || '',
     attachRow,
     picker,
     el('div', { class: 'composer-card' }, [
@@ -1446,6 +1446,7 @@ function composerNode() {
         el('div', { class: 'composer-actions' }, [attachButton, button]),
       ]),
     ]),
+    stats || '',
   ])
 }
 
