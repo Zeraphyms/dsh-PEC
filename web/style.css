@@ -589,24 +589,35 @@ a { color: var(--dsw-brand); text-decoration: none; }
 /* --------------------------------------------------------- jump to bottom */
 /* Floating pill docked above the composer's right edge; visible only while the
    reader has scrolled up during a running turn. */
+.stats-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  padding: 0 4px 6px;
+  color: var(--dsw-label-tertiary);
+  font-size: 10.5px;
+}
+.stats-item { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.stats-item svg { opacity: .8; flex: 0 0 auto; }
 .jump-bottom {
   position: absolute;
   right: 14px;
-  top: -44px;
+  top: -52px;
   z-index: 25;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 8px 14px;
-  border-radius: 999px;
-  background: var(--dsw-toast-bg, #353638);
-  color: var(--dsw-toast-label, #ffffff);
-  font-size: var(--fs-meta);
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--dsw-bg-layer-1, #ffffff);
+  color: var(--dsw-label-primary);
+  border: 1px solid var(--dsw-border-l2);
   box-shadow: var(--shadow-pop);
 }
 .jump-bottom.hidden { display: none; }
-.jump-bottom:active { opacity: .85; }
-.jump-count { font-size: 14px; line-height: 1; }
+.jump-bottom:active { opacity: .8; }
 .composer-wrap { position: relative; }
 
 /* ---------------------------------------------------------------- composer */

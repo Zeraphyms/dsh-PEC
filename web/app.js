@@ -62,6 +62,7 @@ const state = {
   current: null,
   progress: emptyProgress(),
   tasksExpanded: false,
+  stats: null, // 桌面同款会话统计（轮/步、tok/s、总 tok、缓存命中、上下文）
   events: [],
   snapshotAt: null,
   turnStartedAt: null,  // start time of the running turn, for the live clock
@@ -1211,6 +1212,42 @@ async function refreshGoalActivation() {
   } catch { /* the durable projection still shows the goal while offline */ }
 }
 
+/**
+ * Desktop-style session stats line under the composer: steps, tok/s, total
+ * tokens, cache hit rate and context pressure. Reads the Host projections that
+ * ride on every snapshot; hidden entirely when a projection is absent.
+ */
+function sessionStatsBar() {
+  const stats = state.stats || {}
+  const usage = stats.tokenUsage
+  const session = stats.sessionStats
+  const pressure = stats.contextPressure
+  const parts = []
+  if (session) {
+    parts.push({ icon: '<circle cx="12" cy="12" r="9"/><path d="M9 12h6"/>' , text: `${session.turns ?? 0} 轮 ${session.steps ?? 0} 步` })
+    // Desktop's tok/s is decodeTokens over decodeMs (decoding time only).
+    const decodeSeconds = session.decodeMs > 0 ? session.decodeMs / 1000 : 0
+    if (decodeSeconds > 0 && (session.decodeTokens || 0) > 0) {
+      parts.push({ icon: '<path d="M13 2L4 14h6l-1 8 9-12h-6l1-8z"/>', text: `${tokenCount(Math.round(session.decodeTokens / decodeSeconds))}/s` })
+    }
+  }
+  if (usage) {
+    const total = (usage.uncachedInputTokens || 0) + (usage.cacheReadTokens || 0) + (usage.cacheWriteTokens || 0) + (usage.outputTokens || 0)
+    if (total > 0) {
+      parts.push({ icon: '<ellipse cx="12" cy="5" rx="8" ry="2.5"/><path d="M4 5v6c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5V5"/><path d="M4 11v6c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5v-6"/>', text: `${tokenCount(total)} tok` })
+      const prompt = (usage.uncachedInputTokens || 0) + (usage.cacheReadTokens || 0) + (usage.cacheWriteTokens || 0)
+      const hit = cacheHitLabel(usage.cacheReadTokens || 0, prompt)
+      if (hit) parts.push({ icon: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/>', text: `缓存命中 ${hit}%` })
+    }
+  }
+  if (pressure?.pressureTokens && pressure?.contextWindow) {
+    parts.push({ icon: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/>', text: `${Math.round((pressure.pressureTokens / pressure.contextWindow) * 100)}%` })
+  }
+  if (!parts.length) return null
+  return el('div', { class: 'stats-bar' }, parts.map((part) =>
+    el('span', { class: 'stats-item' }, [svg(part.icon, 12), el('span', { text: part.text })])))
+}
+
 function composerNode() {
   const sessionId = state.current?.id
   const draft = draftFor(sessionId)
@@ -1399,6 +1436,7 @@ function composerNode() {
 
   return el('div', { class: 'composer-wrap' }, [
     progressDock(),
+    sessionStatsBar() || '',
     attachRow,
     picker,
     el('div', { class: 'composer-card' }, [
@@ -1687,8 +1725,7 @@ function refreshJumpButton() {
     'aria-label': '跳到最新消息',
     title: '跳到最新消息',
     onclick: () => { forceScrollToBottom(); refreshJumpButton() },
-  }, [el('span', { class: 'jump-count', 'aria-hidden': 'true', text: '⌄' }), '到底'])
-  button.addEventListener('click', () => button.classList.add('hidden'))
+  }, [svg('<path d="M6 9l6 6 6-6"/>', 18)])
   document.querySelector('.composer-wrap')?.prepend(button)
 }
 
@@ -1783,6 +1820,11 @@ function handleFrame(frame) {
     state.snapshotAt = state.current?.id || true
     const values = frame.projections?.values || {}
     state.progress = progressFromSnapshot(frame)
+    state.stats = {
+      sessionStats: values.sessionStats || null,
+      tokenUsage: values.tokenUsage || null,
+      contextPressure: values.contextPressure || null,
+    }
     refreshGoalActivation()
     if (values.title) state.current.title = values.title
     if (frame.header?.agentPreset) state.current.agentPreset = frame.header.agentPreset

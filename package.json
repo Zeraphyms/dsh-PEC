@@ -1,6 +1,6 @@
 {
   "name": "dsh-pec",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Phone gateway for DeepSeek Harness: pair a phone, control sessions, models, presets, approvals, workspace files, a command terminal and DSH settings remotely.",
   "repository": { "type": "git", "url": "git+https://github.com/huajikano/dsh-PEC.git" },
   "homepage": "https://github.com/huajikano/dsh-PEC#readme",
