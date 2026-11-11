@@ -89,6 +89,16 @@ ERR_PNPM_TARBALL_INTEGRITY  tarball integrity doesn't match the one in the lockf
 
 之后再加手机，需要在电脑端 **设置 → 手机连接** 里看 6 位配对码（10 分钟轮换）。
 
+## 开发者：本地更新已发布版本
+
+仓库带 `scripts/sync-local.ps1`：发布新版本后，把本机已安装的插件升到该版本并重载网关，不用在 DSH 界面里手动更新：
+
+```powershell
+pwsh ./scripts/sync-local.ps1 -Version v2.0.2
+```
+
+它会固定 profile 依赖到该 tag、pnpm 更新、清掉残留的禁用标记并等待网关恢复。
+
 ## 5. 可选：终端面板
 
 手机端的「终端」面板走 DSH 的 `subprocess` 服务。若你的 profile 没挂载它，面板会提示"没有启用子进程服务"，其余功能不受影响。补上它的方式：启用官方 bundle `@deepseek-ai/dsh-experimental-terminal-bundle`。
