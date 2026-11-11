@@ -95,6 +95,15 @@ export function applyGoalActivation(progress, event) {
   return true
 }
 
+/**
+ * The composer button's job for the current state. A running turn only turns it
+ * into "stop" when there is nothing typed; otherwise the tap must append to the
+ * running turn. Getting this wrong cancelled the turn instead of queueing.
+ */
+export function composerAction({ running, hasDraft }) {
+  return running && !hasDraft ? 'stop' : 'send'
+}
+
 export function todoCounts(todos) {
   const counts = { completed: 0, in_progress: 0, pending: 0 }
   for (const todo of todos || []) counts[todo.status] += 1

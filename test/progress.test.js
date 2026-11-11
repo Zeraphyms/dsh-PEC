@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { emptyProgress, progressFromSnapshot, applyProgressEvent, applyGoalActivation, todoCounts, goalPhaseLabel } from '../web/progress.js'
+import { emptyProgress, progressFromSnapshot, applyProgressEvent, applyGoalActivation, composerAction, todoCounts, goalPhaseLabel } from '../web/progress.js'
 import { Dsh } from '../lib/dsh.js'
 
 const tasks = [
@@ -82,6 +82,13 @@ test('legacy snapshot fallback folds recorded writes without changing a differen
   applyProgressEvent(first, event(3, 'todo/write', { todos: [] }))
   assert.equal(second.goal, null)
   assert.equal(second.todos, null)
+})
+
+test('a typed message keeps the send button while a turn runs', () => {
+  assert.equal(composerAction({ running: true, hasDraft: false }), 'stop')
+  assert.equal(composerAction({ running: true, hasDraft: true }), 'send')
+  assert.equal(composerAction({ running: false, hasDraft: false }), 'send')
+  assert.equal(composerAction({ running: false, hasDraft: true }), 'send')
 })
 
 test('goal adapter returns runtime authority and uses the latest ref for controls', async () => {

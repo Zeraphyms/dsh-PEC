@@ -1,5 +1,5 @@
 /* dsh-PEC mobile client: talks to the dsh-PEC Host plugin on the PC. */
-import { emptyProgress, progressFromSnapshot, applyProgressEvent, applyGoalActivation, todoCounts, goalPhaseLabel } from './progress.js'
+import { emptyProgress, progressFromSnapshot, applyProgressEvent, applyGoalActivation, composerAction, todoCounts, goalPhaseLabel } from './progress.js'
 
 const app = document.getElementById('app')
 const toastEl = document.getElementById('toast')
@@ -1192,7 +1192,7 @@ function composerNode() {
       event.target.style.height = 'auto'
       event.target.style.height = Math.min(event.target.scrollHeight, 140) + 'px'
       saveDraftText(sessionId, event.target.value)
-      button.classList.toggle('idle', idle())
+      syncSendButton()
     },
     onfocus: () => { state.composerFocus = true },
     onblur: () => { state.composerFocus = false },
@@ -1237,7 +1237,7 @@ function composerNode() {
       ),
     )
     attachRow.style.display = images.length ? 'flex' : 'none'
-    button.classList.toggle('idle', idle())
+    syncSendButton()
   }
 
   async function addFiles(files) {
@@ -1263,11 +1263,53 @@ function composerNode() {
     renderAttachments()
   }
 
-  const idle = () => !state.current?.running && !input.value.trim() && !draft.images.length
+  const draftHasContent = () => Boolean(input.value.trim() || draft.images.length)
+  // A running turn only turns the button into "stop" while there is nothing to
+  // send: typing a line and tapping must append to the running turn, not cancel
+  // it. Clearing the box returns the button to stop.
+  const wantsStop = () => composerAction({ running: Boolean(state.current?.running), hasDraft: draftHasContent() }) === 'stop'
+  const idle = () => !state.current?.running && !draftHasContent()
+  // Long-press keeps "stop" reachable without clearing a draft the user is
+  // still writing; a plain tap with a draft queues instead.
+  let stopHold = null
+  let holdFired = false
+  const cancelHold = () => {
+    if (stopHold) clearTimeout(stopHold)
+    stopHold = null
+  }
   const button = el('button', {
-    class: `send${state.current?.running ? ' stop' : ''}${idle() ? ' idle' : ''}`,
-    onclick: () => (state.current?.running ? stop() : send()),
-  }, [svg(state.current?.running ? ICON.stop : ICON.send, 19)])
+    class: 'send',
+    onclick: () => {
+      if (holdFired) { holdFired = false; return }
+      if (wantsStop()) stop()
+      else send()
+    },
+    onpointerdown: () => {
+      if (!state.current?.running) return
+      cancelHold()
+      stopHold = setTimeout(() => {
+        stopHold = null
+        holdFired = true
+        if (state.current?.running) stop()
+      }, 600)
+    },
+    onpointerup: cancelHold,
+    onpointercancel: cancelHold,
+    onpointerleave: cancelHold,
+  })
+
+  function syncSendButton() {
+    const stopping = wantsStop()
+    button.classList.toggle('stop', stopping)
+    button.classList.toggle('idle', idle())
+    button.title = stopping
+      ? '停止这一轮'
+      : state.current?.running
+        ? '插入当前一轮（排在当前步骤之后，不打断；长按停止）'
+        : '发送'
+    button.replaceChildren(svg(stopping ? ICON.stop : ICON.send, 19))
+  }
+  syncSendButton()
 
   async function send() {
     const text = input.value.trim()
@@ -1278,13 +1320,17 @@ function composerNode() {
     clearDraft(sessionId)
     renderAttachments()
     button.classList.toggle('idle', idle())
+    const queued = Boolean(state.current?.running)
     try {
       await api(`/api/sessions/${encodeURIComponent(state.current.id)}/prompt`, {
         method: 'POST',
-        body: { text: text || '（图片）', images },
+        // While a turn runs this queues after the current step; only an explicit
+        // 'steer' would interrupt it, which the composer never sends by default.
+        body: { text: text || '（图片）', images, mode: 'queue' },
       })
       state.current.running = true
       refreshSessionMeta()
+      if (queued) toast('已插入：会排在当前这步之后')
     } catch (error) {
       toast('发送失败：' + error.message)
       input.value = text
@@ -1395,8 +1441,18 @@ function syncRunningUi() {
   if (sub) sub.textContent = [state.current?.running ? '运行中' : '空闲', modelLabel()].filter(Boolean).join(' · ')
   const button = document.querySelector('.send')
   if (button) {
-    button.classList.toggle('stop', Boolean(state.current?.running))
-    button.replaceChildren(svg(state.current?.running ? ICON.stop : ICON.send, 19))
+    // The composer decides stop vs send from the draft; keep its choice and only
+    // refresh what a running-state change actually affects.
+    const field = document.querySelector('.composer-card textarea')
+    const draft = draftFor(state.current?.id)
+    const stopping = composerAction({ running: Boolean(state.current?.running), hasDraft: Boolean(field?.value.trim() || draft.images.length) }) === 'stop'
+    button.classList.toggle('stop', stopping)
+    button.replaceChildren(svg(stopping ? ICON.stop : ICON.send, 19))
+    button.title = stopping
+      ? '停止这一轮'
+      : state.current?.running
+        ? '插入当前一轮（排在当前步骤之后，不打断；长按停止）'
+        : '发送'
   }
 }
 
