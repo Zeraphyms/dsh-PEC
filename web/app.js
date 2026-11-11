@@ -508,6 +508,13 @@ function renderChat() {
   // quiet loading line instead of an empty transcript, so the session opens
   // directly at the bottom instead of flashing the top of the conversation.
   const body = state.snapshotAt ? chatRows() : [chatLoading()]
+  // The old element is about to be replaced; capture the reader's distance from
+  // the bottom NOW, because the fresh .chat starts at scrollTop 0 and would
+  // otherwise look "at bottom" and let scrollToBottom() yank them down.
+  const previousChat = document.getElementById('chat')
+  const previousFromBottom = previousChat ? previousChat.scrollHeight - previousChat.scrollTop - previousChat.clientHeight : 0
+  const wasReaderScrolledUp = Boolean(previousChat) && previousFromBottom >= 48
+  const previousTop = previousChat?.scrollTop ?? null
   const chat = el('div', { class: 'chat', id: 'chat' }, body)
   const composer = composerNode()
   const approval = approvalStrip()
@@ -527,9 +534,15 @@ function renderChat() {
     // Loading earlier history: hold the reader's place instead of jumping.
     chat.scrollTop = chat.scrollHeight - state.preserveScroll
     state.preserveScroll = null
+  } else if (wasReaderScrolledUp) {
+    // The reader is somewhere up the transcript (thinking over a long
+    // reasoning block). Re-pin their old offset; content appended below never
+    // drags the view down, and the jump pill covers returning to the newest.
+    chat.scrollTop = Math.min(previousTop ?? 0, Math.max(0, chat.scrollHeight - chat.clientHeight - 1))
   } else {
     scrollToBottom()
   }
+  refreshJumpButton()
   // A re-render replaces the textarea; put the caret back where the user had it.
   if (state.composerFocus) {
     const field = app.querySelector('.composer-card textarea')
@@ -679,11 +692,15 @@ function chatRows() {
       rows.push(el('div', { class: 'row note' }, [el('div', { class: 'note-pill', text: '已停止' })]))
     }
     if (event.type === 'turn/end') {
-      // Duration, tokens and cache hit rate sit under the answer they measure.
+      // Duration, completion time, tokens and cache hit rate sit under the
+      // answer they measure. The completion clock is 24-hour so an overnight
+      // task's finish time is unambiguous.
       const parts = []
       if (turnStartedAt && event.time && event.time >= turnStartedAt) {
         parts.push(`本轮用时 ${elapsedLabel(event.time - turnStartedAt)}`)
       }
+      // The finish clock is 24-hour so an overnight task's end is unambiguous.
+      if (event.time) parts.push(`完成于 ${clockLabel(event.time)}`)
       if (turnUsage && turnUsage.tokens > 0) {
         parts.push(`${tokenCount(turnUsage.tokens)} tok`)
         const prompt = turnUsage.input + turnUsage.cache + (turnUsage.cacheWrite || 0)
@@ -759,6 +776,17 @@ function tokenCount(value) {  const n = Number(value) || 0
   if (n >= 1e6) return `${(n / 1e6).toFixed(1).replace(/\.0$/, '')}M`
   if (n >= 1000) return `${(n / 1000).toFixed(1).replace(/\.0$/, '')}k`
   return String(n)
+}
+
+/** 24-hour "HH:MM(:SS)" for a wall-clock timestamp; seconds only on odd ones. */
+function clockLabel(time) {
+  const date = new Date(time)
+  return date.toLocaleTimeString('zh-CN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    ...(date.getSeconds() ? { second: '2-digit' } : {}),
+  })
 }
 
 /** "12 秒" / "3 分 05 秒" / "1 小时 02 分" for a turn's wall-clock time. */
@@ -1602,14 +1630,74 @@ async function answerApproval(id, decision) {  try {
 function scrollToBottom() {
   // Land at the bottom before the first paint, then once more after layout
   // settles (fonts, images). `.chat` is scroll-behavior:auto, so neither call
-  // animates - opening a session no longer slides down the transcript.
+  // animates - opening a session no longer slides down the transcript. When the
+  // reader has scrolled up (thinking over a long reasoning block), this stays
+  // hands-off: only an explicit tap on the jump button returns to the bottom.
   const chat = document.getElementById('chat')
-  if (chat) chat.scrollTop = chat.scrollHeight
+  if (!chat || chatAtBottom(chat)) return
+  chat.scrollTop = chat.scrollHeight
+  requestAnimationFrame(() => {
+    const again = document.getElementById('chat')
+    if (again && chatAtBottom(again)) return
+    if (again) again.scrollTop = again.scrollHeight
+  })
+}
+
+/** Whether the transcript is visually pinned to its newest line. */
+function chatAtBottom(chat) {
+  if (!chat) return true
+  return chat.scrollHeight - chat.scrollTop - chat.clientHeight < 48
+}
+
+/**
+ * Hard jump, ignoring the reader's position. Only the jump-to-bottom button and
+ * explicit session changes use this.
+ */
+function forceScrollToBottom() {
+  const chat = document.getElementById('chat')
+  if (!chat) return
+  chat.scrollTop = chat.scrollHeight
   requestAnimationFrame(() => {
     const again = document.getElementById('chat')
     if (again) again.scrollTop = again.scrollHeight
   })
 }
+
+/**
+ * Whether the reader is scrolled up: while they are, transcript re-renders and
+ * live streaming chunks stop dragging the view back to the bottom.
+ */
+function readerScrolledUp() {
+  const chat = document.getElementById('chat')
+  return Boolean(chat) && !chatAtBottom(chat)
+}
+
+/** Floating "back to newest" pill, shown only while the reader is scrolled up. */
+function refreshJumpButton() {
+  const chat = document.getElementById('chat')
+  if (!chat || state.view !== 'chat') return
+  let button = document.getElementById('jump-bottom')
+  if (!readerScrolledUp()) {
+    button?.remove()
+    return
+  }
+  if (button) return
+  button = el('button', {
+    class: 'jump-bottom', id: 'jump-bottom', type: 'button',
+    'aria-label': '跳到最新消息',
+    title: '跳到最新消息',
+    onclick: () => { forceScrollToBottom(); refreshJumpButton() },
+  }, [el('span', { class: 'jump-count', 'aria-hidden': 'true', text: '⌄' }), '到底'])
+  button.addEventListener('click', () => button.classList.add('hidden'))
+  document.querySelector('.composer-wrap')?.prepend(button)
+}
+
+// The pill lives above the composer, which re-renders; keep visibility in sync
+// on scroll and after every repaint.
+document.addEventListener('scroll', (event) => {
+  if (event.target?.id === 'chat') refreshJumpButton()
+}, true)
+window.addEventListener('resize', () => refreshJumpButton())
 
 /* ------------------------------------------------------------------ stream */
 
@@ -1821,7 +1909,8 @@ function updateLive() {
     reasoningNodeEl.hidden = !state.live.reasoning
     reasoningNodeEl.textContent = state.live.reasoning
   }
-  scrollToBottom()
+  if (chatAtBottom(chat)) scrollToBottom()
+  refreshJumpButton()
 }
 
 async function openSession(id) {
@@ -1840,6 +1929,7 @@ async function openSession(id) {
   state.view = 'chat'
   localStorage.setItem('ccdsh_last_session', id)
   render()
+  forceScrollToBottom()
   openStream(id)
   // If the stream never delivers its snapshot (offline, host hiccup), fall back
   // to the ordinary empty transcript instead of loading forever.

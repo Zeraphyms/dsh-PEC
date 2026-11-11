@@ -586,6 +586,29 @@ a { color: var(--dsw-brand); text-decoration: none; }
 .composer-wrap { flex-shrink: 0; }
 .chat { min-height: 0; }
 
+/* --------------------------------------------------------- jump to bottom */
+/* Floating pill docked above the composer's right edge; visible only while the
+   reader has scrolled up during a running turn. */
+.jump-bottom {
+  position: absolute;
+  right: 14px;
+  top: -44px;
+  z-index: 25;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: var(--dsw-toast-bg, #353638);
+  color: var(--dsw-toast-label, #ffffff);
+  font-size: var(--fs-meta);
+  box-shadow: var(--shadow-pop);
+}
+.jump-bottom.hidden { display: none; }
+.jump-bottom:active { opacity: .85; }
+.jump-count { font-size: 14px; line-height: 1; }
+.composer-wrap { position: relative; }
+
 /* ---------------------------------------------------------------- composer */
 .composer-wrap {
   border-top: 1px solid var(--dsw-border-l1);
