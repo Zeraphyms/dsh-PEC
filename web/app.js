@@ -555,6 +555,7 @@ function renderChat() {
     approval || '',
     chat,
     questions || '',
+    queueDock() || '',
     composer,
   )
   if (state.preserveScroll != null) {
@@ -1933,6 +1934,7 @@ function handleFrame(frame) {
       tokenUsage: values.tokenUsage || null,
       contextPressure: values.contextPressure || null,
     }
+    state.inbox = values.inbox || { 'next-turn': [], 'next-step': [] }
     refreshGoalActivation()
     if (values.title) state.current.title = values.title
     if (frame.header?.agentPreset) state.current.agentPreset = frame.header.agentPreset
@@ -2067,6 +2069,8 @@ async function openSession(id) {
   const summary = state.sessions.find((session) => session.id === id)
   state.current = summary ? { ...summary } : { id, title: '' }
   state.progress = emptyProgress()
+  state.inbox = { 'next-turn': [], 'next-step': [] }
+  state.queueEditing = null
   goalActivationRead += 1
   state.tasksExpanded = false
   state.events = []
