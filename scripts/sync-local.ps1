@@ -28,7 +28,14 @@ $manifest = Get-Content $pkg -Raw | ConvertFrom-Json
 $specifier = "github:huajikano/dsh-PEC#$Version"
 if ($manifest.dependencies.'dsh-pec' -ne $specifier) {
   $manifest.dependencies.'dsh-pec' = $specifier
-  $manifest | ConvertTo-Json -Depth 10 | Set-Content $pkg -Encoding UTF8
+  # WriteAllText with UTF8(false) avoids the BOM that Set-Content -Encoding UTF8
+  # adds on Windows PowerShell 5 - a BOM here crashes DSH's readProfileManifest.
+  [System.IO.File]::WriteAllText($pkg, ($manifest | ConvertTo-Json -Depth 10), (New-Object System.Text.UTF8Encoding($false)))
+  # Belt-and-braces: verify no BOM landed in the file.
+  $bomCheck = [System.IO.File]::ReadAllBytes($pkg)
+  if ($bomCheck.Length -ge 3 -and $bomCheck[0] -eq 0xEF -and $bomCheck[1] -eq 0xBB -and $bomCheck[2] -eq 0xBF) {
+    throw 'package.json was written with a BOM - refusing to continue (this crashes DSH at startup)'
+  }
   Write-Host "pinned dsh-pec to $specifier"
 } else {
   Write-Host "dsh-pec already pinned to $specifier"

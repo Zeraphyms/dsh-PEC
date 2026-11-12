@@ -89,6 +89,18 @@ ERR_PNPM_TARBALL_INTEGRITY  tarball integrity doesn't match the one in the lockf
 
 之后再加手机，需要在电脑端 **设置 → 手机连接** 里看 6 位配对码（10 分钟轮换）。
 
+## 故障排查：更新插件后整个 DSH 打不开
+
+症状：启动即崩，crash 日志里 `readProfileManifest` 报 `Unexpected token ''`——profile 的 `package.json` 开头被写入了 UTF-8 BOM（PowerShell 5 的 `Set-Content`/`ConvertTo-Json -Encoding UTF8` 的默认行为）。
+
+一键修复：
+
+```powershell
+node scripts/fix-bom.cjs
+```
+
+它会扫描 profile 顶层的 JSON/YAML、自动备份并去除 BOM。预防：更新或改写 profile 文件时不要用 PowerShell 直接写 JSON——用 node 写，或写完跑一遍 `fix-bom.cjs` 自检。
+
 ## 开发者：本地更新已发布版本
 
 仓库带 `scripts/sync-local.ps1`：发布新版本后，把本机已安装的插件升到该版本并**热重载**（不用重启 DSH）：
